@@ -1,0 +1,16 @@
+autom4te.cache/
+Makefile
+config.h
+config.log
+config.status
+stamp-h1
+configure.scan
+autoscan.log
+*.tar.gz
+*.o
+*.lo
+*.la
+.libs
+.deps
+src/arm_adb
+src/arm_adb-main.o

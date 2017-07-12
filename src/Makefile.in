@@ -121,7 +121,7 @@ am__v_lt_0 = --silent
 am__v_lt_1 = 
 arm_adb_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(arm_adb_CFLAGS) \
-	$(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
+	$(CFLAGS) $(arm_adb_LDFLAGS) $(LDFLAGS) -o $@
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
 am__v_P_0 = false
@@ -310,6 +310,7 @@ arm_adb_CFLAGS = -I$(top_srcdir)/include -lcrypto -lpthread -lrt -DADB_HOST=1 \
 		 -DHAVE_OFF64_T -D_GNU_SOURCE -D_XOPEN_SOURCE
 
 arm_adb_LDADD = $(top_srcdir)/lib/libcutils.la
+arm_adb_LDFLAGS = -static
 all: all-am
 
 .SUFFIXES:

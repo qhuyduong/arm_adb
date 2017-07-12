@@ -6,12 +6,12 @@ AC_INIT([arm_adb],[1.0.0],[hduong@apm.com])
 AM_INIT_AUTOMAKE([subdir-objects])
 AC_CONFIG_SRCDIR([config.h.in])
 AC_CONFIG_HEADERS([config.h])
+AC_CONFIG_MACRO_DIR([m4])
 
 # Checks for programs.
 AC_PROG_CC
 AM_PROG_CC_C_O
-AM_PROG_AR
-AM_PROG_LIBTOOL
+LT_INIT
 
 # Checks for libraries.
 

@@ -17,6 +17,14 @@
 #ifndef _LIBS_CUTILS_THREADS_H
 #define _LIBS_CUTILS_THREADS_H
 
+#include  <sys/types.h>
+
+#if !defined(_WIN32)
+#include <pthread.h>
+#else
+#include <windows.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -29,42 +37,36 @@ extern "C" {
 /***********************************************************************/
 /***********************************************************************/
 
-#ifdef HAVE_PTHREADS
+extern pid_t gettid();
 
-#include  <pthread.h>
+#if !defined(_WIN32)
 
 typedef struct {
     pthread_mutex_t   lock;
     int               has_tls;
     pthread_key_t     tls;
-
 } thread_store_t;
 
 #define  THREAD_STORE_INITIALIZER  { PTHREAD_MUTEX_INITIALIZER, 0, 0 }
 
-#elif defined HAVE_WIN32_THREADS
-
-#include <windows.h>
+#else // !defined(_WIN32)
 
 typedef struct {
     int               lock_init;
     int               has_tls;
     DWORD             tls;
     CRITICAL_SECTION  lock;
-
 } thread_store_t;
 
 #define  THREAD_STORE_INITIALIZER  { 0, 0, 0, {0, 0, 0, 0, 0, 0} }
 
-#else
-#  error  "no thread_store_t implementation for your platform !!"
-#endif
+#endif // !defined(_WIN32)
 
 typedef void  (*thread_store_destruct_t)(void*  value);
 
 extern void*  thread_store_get(thread_store_t*  store);
 
-extern void   thread_store_set(thread_store_t*          store, 
+extern void   thread_store_set(thread_store_t*          store,
                                void*                    value,
                                thread_store_destruct_t  destroy);
 
@@ -76,7 +78,7 @@ extern void   thread_store_set(thread_store_t*          store,
 /***********************************************************************/
 /***********************************************************************/
 
-#ifdef HAVE_PTHREADS
+#if !defined(_WIN32)
 
 typedef pthread_mutex_t   mutex_t;
 
@@ -98,10 +100,10 @@ static __inline__ void mutex_destroy(mutex_t*  lock)
 {
     pthread_mutex_destroy(lock);
 }
-#endif
 
-#ifdef HAVE_WIN32_THREADS
-typedef struct { 
+#else // !defined(_WIN32)
+
+typedef struct {
     int                init;
     CRITICAL_SECTION   lock[1];
 } mutex_t;
@@ -134,10 +136,10 @@ static __inline__ void  mutex_destroy(mutex_t*  lock)
 {
     if (lock->init) {
         lock->init = 0;
-        DeleteCriticalSection(lock->lock); 
+        DeleteCriticalSection(lock->lock);
     }
 }
-#endif
+#endif // !defined(_WIN32)
 
 #ifdef __cplusplus
 }

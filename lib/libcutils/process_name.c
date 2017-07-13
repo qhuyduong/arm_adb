@@ -17,7 +17,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
-#if defined(HAVE_PRCTL)
+#if defined(__linux__)
 #include <sys/prctl.h>
 #endif
 #include <sys/stat.h>
@@ -25,19 +25,19 @@
 #include <unistd.h>
 
 #include <cutils/process_name.h>
-#ifdef HAVE_ANDROID_OS
+#if defined(__ANDROID__)
 #include <cutils/properties.h>
 #endif
 
 #define PROCESS_NAME_DEVICE "/sys/qemu_trace/process_name"
 
 static const char* process_name = "unknown";
-#ifdef HAVE_ANDROID_OS
+#if defined(__ANDROID__)
 static int running_in_emulator = -1;
 #endif
 
 void set_process_name(const char* new_name) {
-#ifdef HAVE_ANDROID_OS
+#if defined(__ANDROID__)
     char  propBuf[PROPERTY_VALUE_MAX];
 #endif
 
@@ -51,7 +51,7 @@ void set_process_name(const char* new_name) {
     strcpy(copy, new_name);
     process_name = (const char*) copy;
 
-#if defined(HAVE_PRCTL)
+#if defined(__linux__)
     if (len < 16) {
         prctl(PR_SET_NAME, (unsigned long) new_name, 0, 0, 0);
     } else {
@@ -59,7 +59,7 @@ void set_process_name(const char* new_name) {
     }
 #endif
 
-#ifdef HAVE_ANDROID_OS
+#if defined(__ANDROID__)
     // If we know we are not running in the emulator, then return.
     if (running_in_emulator == 0) {
         return;

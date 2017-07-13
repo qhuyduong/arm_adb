@@ -130,23 +130,49 @@ am__uninstall_files_from_dir = { \
   }
 am__installdirs = "$(DESTDIR)$(libdir)"
 LTLIBRARIES = $(lib_LTLIBRARIES)
-libcutils_la_LIBADD =
+libbase_la_LIBADD =
 am__dirstamp = $(am__leading_dot)dirstamp
-am_libcutils_la_OBJECTS =  \
-	libcutils/libcutils_la-socket_inaddr_any_server.lo \
-	libcutils/libcutils_la-socket_local_client.lo \
-	libcutils/libcutils_la-socket_local_server.lo \
-	libcutils/libcutils_la-socket_loopback_client.lo \
-	libcutils/libcutils_la-socket_loopback_server.lo \
-	libcutils/libcutils_la-socket_network_client.lo \
-	libcutils/libcutils_la-load_file.lo
-libcutils_la_OBJECTS = $(am_libcutils_la_OBJECTS)
+am_libbase_la_OBJECTS = base/libbase_la-file.lo \
+	base/libbase_la-stringprintf.lo base/libbase_la-strings.lo \
+	base/libbase_la-logging.lo base/libbase_la-parsenetaddress.lo
+libbase_la_OBJECTS = $(am_libbase_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
 am__v_lt_0 = --silent
 am__v_lt_1 = 
-libcutils_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
-	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(libcutils_la_CFLAGS) \
+libbase_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) \
+	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(libbase_la_CXXFLAGS) \
+	$(CXXFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
+libcrypto_utils_la_LIBADD =
+am_libcrypto_utils_la_OBJECTS =  \
+	libcrypto_utils/libcrypto_utils_la-android_pubkey.lo
+libcrypto_utils_la_OBJECTS = $(am_libcrypto_utils_la_OBJECTS)
+libcrypto_utils_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
+	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
+	$(libcrypto_utils_la_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
+	$(LDFLAGS) -o $@
+libcutils_la_LIBADD =
+am_libcutils_la_OBJECTS =  \
+	libcutils/libcutils_la-socket_inaddr_any_server_unix.lo \
+	libcutils/libcutils_la-socket_local_client_unix.lo \
+	libcutils/libcutils_la-socket_local_server_unix.lo \
+	libcutils/libcutils_la-socket_loopback_client_unix.lo \
+	libcutils/libcutils_la-socket_loopback_server_unix.lo \
+	libcutils/libcutils_la-socket_network_client_unix.lo \
+	libcutils/libcutils_la-load_file.lo \
+	libcutils/libcutils_la-threads.lo \
+	libcutils/libcutils_la-sockets.lo
+libcutils_la_OBJECTS = $(am_libcutils_la_OBJECTS)
+libcutils_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) \
+	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(libcutils_la_CXXFLAGS) \
+	$(CXXFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
+liblog_la_LIBADD =
+am_liblog_la_OBJECTS = liblog/liblog_la-logd_write.lo \
+	liblog/liblog_la-log_event_write.lo \
+	liblog/liblog_la-fake_log_device.lo
+liblog_la_OBJECTS = $(am_liblog_la_OBJECTS)
+liblog_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
+	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(liblog_la_CFLAGS) \
 	$(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
@@ -182,8 +208,28 @@ AM_V_CCLD = $(am__v_CCLD_@AM_V@)
 am__v_CCLD_ = $(am__v_CCLD_@AM_DEFAULT_V@)
 am__v_CCLD_0 = @echo "  CCLD    " $@;
 am__v_CCLD_1 = 
-SOURCES = $(libcutils_la_SOURCES)
-DIST_SOURCES = $(libcutils_la_SOURCES)
+CXXCOMPILE = $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) \
+	$(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS)
+LTCXXCOMPILE = $(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) \
+	$(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) \
+	$(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) \
+	$(AM_CXXFLAGS) $(CXXFLAGS)
+AM_V_CXX = $(am__v_CXX_@AM_V@)
+am__v_CXX_ = $(am__v_CXX_@AM_DEFAULT_V@)
+am__v_CXX_0 = @echo "  CXX     " $@;
+am__v_CXX_1 = 
+CXXLD = $(CXX)
+CXXLINK = $(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) \
+	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(AM_CXXFLAGS) \
+	$(CXXFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
+AM_V_CXXLD = $(am__v_CXXLD_@AM_V@)
+am__v_CXXLD_ = $(am__v_CXXLD_@AM_DEFAULT_V@)
+am__v_CXXLD_0 = @echo "  CXXLD   " $@;
+am__v_CXXLD_1 = 
+SOURCES = $(libbase_la_SOURCES) $(libcrypto_utils_la_SOURCES) \
+	$(libcutils_la_SOURCES) $(liblog_la_SOURCES)
+DIST_SOURCES = $(libbase_la_SOURCES) $(libcrypto_utils_la_SOURCES) \
+	$(libcutils_la_SOURCES) $(liblog_la_SOURCES)
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
@@ -223,6 +269,10 @@ CCDEPMODE = @CCDEPMODE@
 CFLAGS = @CFLAGS@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
+CXX = @CXX@
+CXXCPP = @CXXCPP@
+CXXDEPMODE = @CXXDEPMODE@
+CXXFLAGS = @CXXFLAGS@
 CYGPATH_W = @CYGPATH_W@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
@@ -279,6 +329,7 @@ abs_top_builddir = @abs_top_builddir@
 abs_top_srcdir = @abs_top_srcdir@
 ac_ct_AR = @ac_ct_AR@
 ac_ct_CC = @ac_ct_CC@
+ac_ct_CXX = @ac_ct_CXX@
 ac_ct_DUMPBIN = @ac_ct_DUMPBIN@
 am__include = @am__include@
 am__leading_dot = @am__leading_dot@
@@ -326,20 +377,43 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-lib_LTLIBRARIES = libcutils.la
-libcutils_la_SOURCES = libcutils/socket_inaddr_any_server.c \
-		       libcutils/socket_local_client.c \
-		       libcutils/socket_local_server.c \
-		       libcutils/socket_loopback_client.c \
-		       libcutils/socket_loopback_server.c \
-		       libcutils/socket_network_client.c \
-		       libcutils/load_file.c
+lib_LTLIBRARIES = libbase.la libcrypto_utils.la libcutils.la  liblog.la
+libbase_la_SOURCES = base/file.cpp base/stringprintf.cpp \
+		    base/strings.cpp base/logging.cpp \
+		    base/parsenetaddress.cpp
 
-libcutils_la_CFLAGS = -I$(top_srcdir)/include
+libbase_la_CXXFLAGS = -I$(includedir) -I$(top_srcdir)/include \
+		      -I$(top_srcdir)/lib/base/include \
+		      -std=c++11
+
+libcrypto_utils_la_SOURCES = libcrypto_utils/android_pubkey.c
+libcrypto_utils_la_CFLAGS = -I$(includedir) -I$(top_srcdir)/include \
+			    -I$(top_srcdir)/lib/libcrypto_utils/include \
+			    -std=c99
+
+libcutils_la_SOURCES = libcutils/socket_inaddr_any_server_unix.c \
+		       libcutils/socket_local_client_unix.c \
+		       libcutils/socket_local_server_unix.c \
+		       libcutils/socket_loopback_client_unix.c \
+		       libcutils/socket_loopback_server_unix.c \
+		       libcutils/socket_network_client_unix.c \
+		       libcutils/load_file.c libcutils/threads.c \
+		       libcutils/sockets.cpp
+
+libcutils_la_CFLAGS = -I$(includedir) -I$(top_srcdir)/include
+libcutils_la_CXXFLAGS = -I$(includedir) -I$(top_srcdir)/include -std=c++11
+liblog_la_SOURCES = liblog/logd_write.c liblog/log_event_write.c \
+		   liblog/fake_log_device.c
+
+liblog_la_CFLAGS = -I$(includedir) -I$(top_srcdir)/include \
+		   -I$(top_srcdir)/lib/base/include -std=c99 \
+		   -DLIBLOG_LOG_TAG=1005 -DFAKE_LOG_DEVICE=1 \
+		   -D_POSIX_C_SOURCE=199309L
+
 all: all-am
 
 .SUFFIXES:
-.SUFFIXES: .c .lo .o .obj
+.SUFFIXES: .c .cpp .lo .o .obj
 $(srcdir)/Makefile.in:  $(srcdir)/Makefile.am  $(am__configure_deps)
 	@for dep in $?; do \
 	  case '$(am__configure_deps)' in \
@@ -404,45 +478,112 @@ clean-libLTLIBRARIES:
 	  echo rm -f $${locs}; \
 	  rm -f $${locs}; \
 	}
+base/$(am__dirstamp):
+	@$(MKDIR_P) base
+	@: > base/$(am__dirstamp)
+base/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) base/$(DEPDIR)
+	@: > base/$(DEPDIR)/$(am__dirstamp)
+base/libbase_la-file.lo: base/$(am__dirstamp) \
+	base/$(DEPDIR)/$(am__dirstamp)
+base/libbase_la-stringprintf.lo: base/$(am__dirstamp) \
+	base/$(DEPDIR)/$(am__dirstamp)
+base/libbase_la-strings.lo: base/$(am__dirstamp) \
+	base/$(DEPDIR)/$(am__dirstamp)
+base/libbase_la-logging.lo: base/$(am__dirstamp) \
+	base/$(DEPDIR)/$(am__dirstamp)
+base/libbase_la-parsenetaddress.lo: base/$(am__dirstamp) \
+	base/$(DEPDIR)/$(am__dirstamp)
+
+libbase.la: $(libbase_la_OBJECTS) $(libbase_la_DEPENDENCIES) $(EXTRA_libbase_la_DEPENDENCIES) 
+	$(AM_V_CXXLD)$(libbase_la_LINK) -rpath $(libdir) $(libbase_la_OBJECTS) $(libbase_la_LIBADD) $(LIBS)
+libcrypto_utils/$(am__dirstamp):
+	@$(MKDIR_P) libcrypto_utils
+	@: > libcrypto_utils/$(am__dirstamp)
+libcrypto_utils/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) libcrypto_utils/$(DEPDIR)
+	@: > libcrypto_utils/$(DEPDIR)/$(am__dirstamp)
+libcrypto_utils/libcrypto_utils_la-android_pubkey.lo:  \
+	libcrypto_utils/$(am__dirstamp) \
+	libcrypto_utils/$(DEPDIR)/$(am__dirstamp)
+
+libcrypto_utils.la: $(libcrypto_utils_la_OBJECTS) $(libcrypto_utils_la_DEPENDENCIES) $(EXTRA_libcrypto_utils_la_DEPENDENCIES) 
+	$(AM_V_CCLD)$(libcrypto_utils_la_LINK) -rpath $(libdir) $(libcrypto_utils_la_OBJECTS) $(libcrypto_utils_la_LIBADD) $(LIBS)
 libcutils/$(am__dirstamp):
 	@$(MKDIR_P) libcutils
 	@: > libcutils/$(am__dirstamp)
 libcutils/$(DEPDIR)/$(am__dirstamp):
 	@$(MKDIR_P) libcutils/$(DEPDIR)
 	@: > libcutils/$(DEPDIR)/$(am__dirstamp)
-libcutils/libcutils_la-socket_inaddr_any_server.lo:  \
+libcutils/libcutils_la-socket_inaddr_any_server_unix.lo:  \
 	libcutils/$(am__dirstamp) libcutils/$(DEPDIR)/$(am__dirstamp)
-libcutils/libcutils_la-socket_local_client.lo:  \
+libcutils/libcutils_la-socket_local_client_unix.lo:  \
 	libcutils/$(am__dirstamp) libcutils/$(DEPDIR)/$(am__dirstamp)
-libcutils/libcutils_la-socket_local_server.lo:  \
+libcutils/libcutils_la-socket_local_server_unix.lo:  \
 	libcutils/$(am__dirstamp) libcutils/$(DEPDIR)/$(am__dirstamp)
-libcutils/libcutils_la-socket_loopback_client.lo:  \
+libcutils/libcutils_la-socket_loopback_client_unix.lo:  \
 	libcutils/$(am__dirstamp) libcutils/$(DEPDIR)/$(am__dirstamp)
-libcutils/libcutils_la-socket_loopback_server.lo:  \
+libcutils/libcutils_la-socket_loopback_server_unix.lo:  \
 	libcutils/$(am__dirstamp) libcutils/$(DEPDIR)/$(am__dirstamp)
-libcutils/libcutils_la-socket_network_client.lo:  \
+libcutils/libcutils_la-socket_network_client_unix.lo:  \
 	libcutils/$(am__dirstamp) libcutils/$(DEPDIR)/$(am__dirstamp)
 libcutils/libcutils_la-load_file.lo: libcutils/$(am__dirstamp) \
 	libcutils/$(DEPDIR)/$(am__dirstamp)
+libcutils/libcutils_la-threads.lo: libcutils/$(am__dirstamp) \
+	libcutils/$(DEPDIR)/$(am__dirstamp)
+libcutils/libcutils_la-sockets.lo: libcutils/$(am__dirstamp) \
+	libcutils/$(DEPDIR)/$(am__dirstamp)
 
 libcutils.la: $(libcutils_la_OBJECTS) $(libcutils_la_DEPENDENCIES) $(EXTRA_libcutils_la_DEPENDENCIES) 
-	$(AM_V_CCLD)$(libcutils_la_LINK) -rpath $(libdir) $(libcutils_la_OBJECTS) $(libcutils_la_LIBADD) $(LIBS)
+	$(AM_V_CXXLD)$(libcutils_la_LINK) -rpath $(libdir) $(libcutils_la_OBJECTS) $(libcutils_la_LIBADD) $(LIBS)
+liblog/$(am__dirstamp):
+	@$(MKDIR_P) liblog
+	@: > liblog/$(am__dirstamp)
+liblog/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) liblog/$(DEPDIR)
+	@: > liblog/$(DEPDIR)/$(am__dirstamp)
+liblog/liblog_la-logd_write.lo: liblog/$(am__dirstamp) \
+	liblog/$(DEPDIR)/$(am__dirstamp)
+liblog/liblog_la-log_event_write.lo: liblog/$(am__dirstamp) \
+	liblog/$(DEPDIR)/$(am__dirstamp)
+liblog/liblog_la-fake_log_device.lo: liblog/$(am__dirstamp) \
+	liblog/$(DEPDIR)/$(am__dirstamp)
+
+liblog.la: $(liblog_la_OBJECTS) $(liblog_la_DEPENDENCIES) $(EXTRA_liblog_la_DEPENDENCIES) 
+	$(AM_V_CCLD)$(liblog_la_LINK) -rpath $(libdir) $(liblog_la_OBJECTS) $(liblog_la_LIBADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
+	-rm -f base/*.$(OBJEXT)
+	-rm -f base/*.lo
+	-rm -f libcrypto_utils/*.$(OBJEXT)
+	-rm -f libcrypto_utils/*.lo
 	-rm -f libcutils/*.$(OBJEXT)
 	-rm -f libcutils/*.lo
+	-rm -f liblog/*.$(OBJEXT)
+	-rm -f liblog/*.lo
 
 distclean-compile:
 	-rm -f *.tab.c
 
+@AMDEP_TRUE@@am__include@ @am__quote@base/$(DEPDIR)/libbase_la-file.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@base/$(DEPDIR)/libbase_la-logging.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@base/$(DEPDIR)/libbase_la-parsenetaddress.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@base/$(DEPDIR)/libbase_la-stringprintf.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@base/$(DEPDIR)/libbase_la-strings.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@libcrypto_utils/$(DEPDIR)/libcrypto_utils_la-android_pubkey.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-load_file.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-socket_inaddr_any_server.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-socket_local_client.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-socket_local_server.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-socket_loopback_client.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-socket_loopback_server.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-socket_network_client.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-socket_inaddr_any_server_unix.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-socket_local_client_unix.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-socket_local_server_unix.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-socket_loopback_client_unix.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-socket_loopback_server_unix.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-socket_network_client_unix.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-sockets.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-threads.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@liblog/$(DEPDIR)/liblog_la-fake_log_device.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@liblog/$(DEPDIR)/liblog_la-log_event_write.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@liblog/$(DEPDIR)/liblog_la-logd_write.Plo@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(AM_V_CC)depbase=`echo $@ | sed 's|[^/]*$$|$(DEPDIR)/&|;s|\.o$$||'`;\
@@ -468,47 +609,54 @@ distclean-compile:
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LTCOMPILE) -c -o $@ $<
 
-libcutils/libcutils_la-socket_inaddr_any_server.lo: libcutils/socket_inaddr_any_server.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -MT libcutils/libcutils_la-socket_inaddr_any_server.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-socket_inaddr_any_server.Tpo -c -o libcutils/libcutils_la-socket_inaddr_any_server.lo `test -f 'libcutils/socket_inaddr_any_server.c' || echo '$(srcdir)/'`libcutils/socket_inaddr_any_server.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-socket_inaddr_any_server.Tpo libcutils/$(DEPDIR)/libcutils_la-socket_inaddr_any_server.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libcutils/socket_inaddr_any_server.c' object='libcutils/libcutils_la-socket_inaddr_any_server.lo' libtool=yes @AMDEPBACKSLASH@
+libcrypto_utils/libcrypto_utils_la-android_pubkey.lo: libcrypto_utils/android_pubkey.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcrypto_utils_la_CFLAGS) $(CFLAGS) -MT libcrypto_utils/libcrypto_utils_la-android_pubkey.lo -MD -MP -MF libcrypto_utils/$(DEPDIR)/libcrypto_utils_la-android_pubkey.Tpo -c -o libcrypto_utils/libcrypto_utils_la-android_pubkey.lo `test -f 'libcrypto_utils/android_pubkey.c' || echo '$(srcdir)/'`libcrypto_utils/android_pubkey.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libcrypto_utils/$(DEPDIR)/libcrypto_utils_la-android_pubkey.Tpo libcrypto_utils/$(DEPDIR)/libcrypto_utils_la-android_pubkey.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libcrypto_utils/android_pubkey.c' object='libcrypto_utils/libcrypto_utils_la-android_pubkey.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -c -o libcutils/libcutils_la-socket_inaddr_any_server.lo `test -f 'libcutils/socket_inaddr_any_server.c' || echo '$(srcdir)/'`libcutils/socket_inaddr_any_server.c
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcrypto_utils_la_CFLAGS) $(CFLAGS) -c -o libcrypto_utils/libcrypto_utils_la-android_pubkey.lo `test -f 'libcrypto_utils/android_pubkey.c' || echo '$(srcdir)/'`libcrypto_utils/android_pubkey.c
 
-libcutils/libcutils_la-socket_local_client.lo: libcutils/socket_local_client.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -MT libcutils/libcutils_la-socket_local_client.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-socket_local_client.Tpo -c -o libcutils/libcutils_la-socket_local_client.lo `test -f 'libcutils/socket_local_client.c' || echo '$(srcdir)/'`libcutils/socket_local_client.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-socket_local_client.Tpo libcutils/$(DEPDIR)/libcutils_la-socket_local_client.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libcutils/socket_local_client.c' object='libcutils/libcutils_la-socket_local_client.lo' libtool=yes @AMDEPBACKSLASH@
+libcutils/libcutils_la-socket_inaddr_any_server_unix.lo: libcutils/socket_inaddr_any_server_unix.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -MT libcutils/libcutils_la-socket_inaddr_any_server_unix.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-socket_inaddr_any_server_unix.Tpo -c -o libcutils/libcutils_la-socket_inaddr_any_server_unix.lo `test -f 'libcutils/socket_inaddr_any_server_unix.c' || echo '$(srcdir)/'`libcutils/socket_inaddr_any_server_unix.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-socket_inaddr_any_server_unix.Tpo libcutils/$(DEPDIR)/libcutils_la-socket_inaddr_any_server_unix.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libcutils/socket_inaddr_any_server_unix.c' object='libcutils/libcutils_la-socket_inaddr_any_server_unix.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -c -o libcutils/libcutils_la-socket_local_client.lo `test -f 'libcutils/socket_local_client.c' || echo '$(srcdir)/'`libcutils/socket_local_client.c
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -c -o libcutils/libcutils_la-socket_inaddr_any_server_unix.lo `test -f 'libcutils/socket_inaddr_any_server_unix.c' || echo '$(srcdir)/'`libcutils/socket_inaddr_any_server_unix.c
 
-libcutils/libcutils_la-socket_local_server.lo: libcutils/socket_local_server.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -MT libcutils/libcutils_la-socket_local_server.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-socket_local_server.Tpo -c -o libcutils/libcutils_la-socket_local_server.lo `test -f 'libcutils/socket_local_server.c' || echo '$(srcdir)/'`libcutils/socket_local_server.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-socket_local_server.Tpo libcutils/$(DEPDIR)/libcutils_la-socket_local_server.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libcutils/socket_local_server.c' object='libcutils/libcutils_la-socket_local_server.lo' libtool=yes @AMDEPBACKSLASH@
+libcutils/libcutils_la-socket_local_client_unix.lo: libcutils/socket_local_client_unix.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -MT libcutils/libcutils_la-socket_local_client_unix.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-socket_local_client_unix.Tpo -c -o libcutils/libcutils_la-socket_local_client_unix.lo `test -f 'libcutils/socket_local_client_unix.c' || echo '$(srcdir)/'`libcutils/socket_local_client_unix.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-socket_local_client_unix.Tpo libcutils/$(DEPDIR)/libcutils_la-socket_local_client_unix.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libcutils/socket_local_client_unix.c' object='libcutils/libcutils_la-socket_local_client_unix.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -c -o libcutils/libcutils_la-socket_local_server.lo `test -f 'libcutils/socket_local_server.c' || echo '$(srcdir)/'`libcutils/socket_local_server.c
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -c -o libcutils/libcutils_la-socket_local_client_unix.lo `test -f 'libcutils/socket_local_client_unix.c' || echo '$(srcdir)/'`libcutils/socket_local_client_unix.c
 
-libcutils/libcutils_la-socket_loopback_client.lo: libcutils/socket_loopback_client.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -MT libcutils/libcutils_la-socket_loopback_client.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-socket_loopback_client.Tpo -c -o libcutils/libcutils_la-socket_loopback_client.lo `test -f 'libcutils/socket_loopback_client.c' || echo '$(srcdir)/'`libcutils/socket_loopback_client.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-socket_loopback_client.Tpo libcutils/$(DEPDIR)/libcutils_la-socket_loopback_client.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libcutils/socket_loopback_client.c' object='libcutils/libcutils_la-socket_loopback_client.lo' libtool=yes @AMDEPBACKSLASH@
+libcutils/libcutils_la-socket_local_server_unix.lo: libcutils/socket_local_server_unix.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -MT libcutils/libcutils_la-socket_local_server_unix.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-socket_local_server_unix.Tpo -c -o libcutils/libcutils_la-socket_local_server_unix.lo `test -f 'libcutils/socket_local_server_unix.c' || echo '$(srcdir)/'`libcutils/socket_local_server_unix.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-socket_local_server_unix.Tpo libcutils/$(DEPDIR)/libcutils_la-socket_local_server_unix.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libcutils/socket_local_server_unix.c' object='libcutils/libcutils_la-socket_local_server_unix.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -c -o libcutils/libcutils_la-socket_loopback_client.lo `test -f 'libcutils/socket_loopback_client.c' || echo '$(srcdir)/'`libcutils/socket_loopback_client.c
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -c -o libcutils/libcutils_la-socket_local_server_unix.lo `test -f 'libcutils/socket_local_server_unix.c' || echo '$(srcdir)/'`libcutils/socket_local_server_unix.c
 
-libcutils/libcutils_la-socket_loopback_server.lo: libcutils/socket_loopback_server.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -MT libcutils/libcutils_la-socket_loopback_server.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-socket_loopback_server.Tpo -c -o libcutils/libcutils_la-socket_loopback_server.lo `test -f 'libcutils/socket_loopback_server.c' || echo '$(srcdir)/'`libcutils/socket_loopback_server.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-socket_loopback_server.Tpo libcutils/$(DEPDIR)/libcutils_la-socket_loopback_server.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libcutils/socket_loopback_server.c' object='libcutils/libcutils_la-socket_loopback_server.lo' libtool=yes @AMDEPBACKSLASH@
+libcutils/libcutils_la-socket_loopback_client_unix.lo: libcutils/socket_loopback_client_unix.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -MT libcutils/libcutils_la-socket_loopback_client_unix.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-socket_loopback_client_unix.Tpo -c -o libcutils/libcutils_la-socket_loopback_client_unix.lo `test -f 'libcutils/socket_loopback_client_unix.c' || echo '$(srcdir)/'`libcutils/socket_loopback_client_unix.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-socket_loopback_client_unix.Tpo libcutils/$(DEPDIR)/libcutils_la-socket_loopback_client_unix.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libcutils/socket_loopback_client_unix.c' object='libcutils/libcutils_la-socket_loopback_client_unix.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -c -o libcutils/libcutils_la-socket_loopback_server.lo `test -f 'libcutils/socket_loopback_server.c' || echo '$(srcdir)/'`libcutils/socket_loopback_server.c
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -c -o libcutils/libcutils_la-socket_loopback_client_unix.lo `test -f 'libcutils/socket_loopback_client_unix.c' || echo '$(srcdir)/'`libcutils/socket_loopback_client_unix.c
 
-libcutils/libcutils_la-socket_network_client.lo: libcutils/socket_network_client.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -MT libcutils/libcutils_la-socket_network_client.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-socket_network_client.Tpo -c -o libcutils/libcutils_la-socket_network_client.lo `test -f 'libcutils/socket_network_client.c' || echo '$(srcdir)/'`libcutils/socket_network_client.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-socket_network_client.Tpo libcutils/$(DEPDIR)/libcutils_la-socket_network_client.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libcutils/socket_network_client.c' object='libcutils/libcutils_la-socket_network_client.lo' libtool=yes @AMDEPBACKSLASH@
+libcutils/libcutils_la-socket_loopback_server_unix.lo: libcutils/socket_loopback_server_unix.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -MT libcutils/libcutils_la-socket_loopback_server_unix.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-socket_loopback_server_unix.Tpo -c -o libcutils/libcutils_la-socket_loopback_server_unix.lo `test -f 'libcutils/socket_loopback_server_unix.c' || echo '$(srcdir)/'`libcutils/socket_loopback_server_unix.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-socket_loopback_server_unix.Tpo libcutils/$(DEPDIR)/libcutils_la-socket_loopback_server_unix.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libcutils/socket_loopback_server_unix.c' object='libcutils/libcutils_la-socket_loopback_server_unix.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -c -o libcutils/libcutils_la-socket_network_client.lo `test -f 'libcutils/socket_network_client.c' || echo '$(srcdir)/'`libcutils/socket_network_client.c
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -c -o libcutils/libcutils_la-socket_loopback_server_unix.lo `test -f 'libcutils/socket_loopback_server_unix.c' || echo '$(srcdir)/'`libcutils/socket_loopback_server_unix.c
+
+libcutils/libcutils_la-socket_network_client_unix.lo: libcutils/socket_network_client_unix.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -MT libcutils/libcutils_la-socket_network_client_unix.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-socket_network_client_unix.Tpo -c -o libcutils/libcutils_la-socket_network_client_unix.lo `test -f 'libcutils/socket_network_client_unix.c' || echo '$(srcdir)/'`libcutils/socket_network_client_unix.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-socket_network_client_unix.Tpo libcutils/$(DEPDIR)/libcutils_la-socket_network_client_unix.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libcutils/socket_network_client_unix.c' object='libcutils/libcutils_la-socket_network_client_unix.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -c -o libcutils/libcutils_la-socket_network_client_unix.lo `test -f 'libcutils/socket_network_client_unix.c' || echo '$(srcdir)/'`libcutils/socket_network_client_unix.c
 
 libcutils/libcutils_la-load_file.lo: libcutils/load_file.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -MT libcutils/libcutils_la-load_file.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-load_file.Tpo -c -o libcutils/libcutils_la-load_file.lo `test -f 'libcutils/load_file.c' || echo '$(srcdir)/'`libcutils/load_file.c
@@ -517,12 +665,109 @@ libcutils/libcutils_la-load_file.lo: libcutils/load_file.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -c -o libcutils/libcutils_la-load_file.lo `test -f 'libcutils/load_file.c' || echo '$(srcdir)/'`libcutils/load_file.c
 
+libcutils/libcutils_la-threads.lo: libcutils/threads.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -MT libcutils/libcutils_la-threads.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-threads.Tpo -c -o libcutils/libcutils_la-threads.lo `test -f 'libcutils/threads.c' || echo '$(srcdir)/'`libcutils/threads.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-threads.Tpo libcutils/$(DEPDIR)/libcutils_la-threads.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='libcutils/threads.c' object='libcutils/libcutils_la-threads.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CFLAGS) $(CFLAGS) -c -o libcutils/libcutils_la-threads.lo `test -f 'libcutils/threads.c' || echo '$(srcdir)/'`libcutils/threads.c
+
+liblog/liblog_la-logd_write.lo: liblog/logd_write.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(liblog_la_CFLAGS) $(CFLAGS) -MT liblog/liblog_la-logd_write.lo -MD -MP -MF liblog/$(DEPDIR)/liblog_la-logd_write.Tpo -c -o liblog/liblog_la-logd_write.lo `test -f 'liblog/logd_write.c' || echo '$(srcdir)/'`liblog/logd_write.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) liblog/$(DEPDIR)/liblog_la-logd_write.Tpo liblog/$(DEPDIR)/liblog_la-logd_write.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='liblog/logd_write.c' object='liblog/liblog_la-logd_write.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(liblog_la_CFLAGS) $(CFLAGS) -c -o liblog/liblog_la-logd_write.lo `test -f 'liblog/logd_write.c' || echo '$(srcdir)/'`liblog/logd_write.c
+
+liblog/liblog_la-log_event_write.lo: liblog/log_event_write.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(liblog_la_CFLAGS) $(CFLAGS) -MT liblog/liblog_la-log_event_write.lo -MD -MP -MF liblog/$(DEPDIR)/liblog_la-log_event_write.Tpo -c -o liblog/liblog_la-log_event_write.lo `test -f 'liblog/log_event_write.c' || echo '$(srcdir)/'`liblog/log_event_write.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) liblog/$(DEPDIR)/liblog_la-log_event_write.Tpo liblog/$(DEPDIR)/liblog_la-log_event_write.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='liblog/log_event_write.c' object='liblog/liblog_la-log_event_write.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(liblog_la_CFLAGS) $(CFLAGS) -c -o liblog/liblog_la-log_event_write.lo `test -f 'liblog/log_event_write.c' || echo '$(srcdir)/'`liblog/log_event_write.c
+
+liblog/liblog_la-fake_log_device.lo: liblog/fake_log_device.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(liblog_la_CFLAGS) $(CFLAGS) -MT liblog/liblog_la-fake_log_device.lo -MD -MP -MF liblog/$(DEPDIR)/liblog_la-fake_log_device.Tpo -c -o liblog/liblog_la-fake_log_device.lo `test -f 'liblog/fake_log_device.c' || echo '$(srcdir)/'`liblog/fake_log_device.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) liblog/$(DEPDIR)/liblog_la-fake_log_device.Tpo liblog/$(DEPDIR)/liblog_la-fake_log_device.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='liblog/fake_log_device.c' object='liblog/liblog_la-fake_log_device.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(liblog_la_CFLAGS) $(CFLAGS) -c -o liblog/liblog_la-fake_log_device.lo `test -f 'liblog/fake_log_device.c' || echo '$(srcdir)/'`liblog/fake_log_device.c
+
+.cpp.o:
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)depbase=`echo $@ | sed 's|[^/]*$$|$(DEPDIR)/&|;s|\.o$$||'`;\
+@am__fastdepCXX_TRUE@	$(CXXCOMPILE) -MT $@ -MD -MP -MF $$depbase.Tpo -c -o $@ $< &&\
+@am__fastdepCXX_TRUE@	$(am__mv) $$depbase.Tpo $$depbase.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='$<' object='$@' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXXCOMPILE) -c -o $@ $<
+
+.cpp.obj:
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)depbase=`echo $@ | sed 's|[^/]*$$|$(DEPDIR)/&|;s|\.obj$$||'`;\
+@am__fastdepCXX_TRUE@	$(CXXCOMPILE) -MT $@ -MD -MP -MF $$depbase.Tpo -c -o $@ `$(CYGPATH_W) '$<'` &&\
+@am__fastdepCXX_TRUE@	$(am__mv) $$depbase.Tpo $$depbase.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='$<' object='$@' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXXCOMPILE) -c -o $@ `$(CYGPATH_W) '$<'`
+
+.cpp.lo:
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)depbase=`echo $@ | sed 's|[^/]*$$|$(DEPDIR)/&|;s|\.lo$$||'`;\
+@am__fastdepCXX_TRUE@	$(LTCXXCOMPILE) -MT $@ -MD -MP -MF $$depbase.Tpo -c -o $@ $< &&\
+@am__fastdepCXX_TRUE@	$(am__mv) $$depbase.Tpo $$depbase.Plo
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='$<' object='$@' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(LTCXXCOMPILE) -c -o $@ $<
+
+base/libbase_la-file.lo: base/file.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -MT base/libbase_la-file.lo -MD -MP -MF base/$(DEPDIR)/libbase_la-file.Tpo -c -o base/libbase_la-file.lo `test -f 'base/file.cpp' || echo '$(srcdir)/'`base/file.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) base/$(DEPDIR)/libbase_la-file.Tpo base/$(DEPDIR)/libbase_la-file.Plo
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='base/file.cpp' object='base/libbase_la-file.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -c -o base/libbase_la-file.lo `test -f 'base/file.cpp' || echo '$(srcdir)/'`base/file.cpp
+
+base/libbase_la-stringprintf.lo: base/stringprintf.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -MT base/libbase_la-stringprintf.lo -MD -MP -MF base/$(DEPDIR)/libbase_la-stringprintf.Tpo -c -o base/libbase_la-stringprintf.lo `test -f 'base/stringprintf.cpp' || echo '$(srcdir)/'`base/stringprintf.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) base/$(DEPDIR)/libbase_la-stringprintf.Tpo base/$(DEPDIR)/libbase_la-stringprintf.Plo
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='base/stringprintf.cpp' object='base/libbase_la-stringprintf.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -c -o base/libbase_la-stringprintf.lo `test -f 'base/stringprintf.cpp' || echo '$(srcdir)/'`base/stringprintf.cpp
+
+base/libbase_la-strings.lo: base/strings.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -MT base/libbase_la-strings.lo -MD -MP -MF base/$(DEPDIR)/libbase_la-strings.Tpo -c -o base/libbase_la-strings.lo `test -f 'base/strings.cpp' || echo '$(srcdir)/'`base/strings.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) base/$(DEPDIR)/libbase_la-strings.Tpo base/$(DEPDIR)/libbase_la-strings.Plo
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='base/strings.cpp' object='base/libbase_la-strings.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -c -o base/libbase_la-strings.lo `test -f 'base/strings.cpp' || echo '$(srcdir)/'`base/strings.cpp
+
+base/libbase_la-logging.lo: base/logging.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -MT base/libbase_la-logging.lo -MD -MP -MF base/$(DEPDIR)/libbase_la-logging.Tpo -c -o base/libbase_la-logging.lo `test -f 'base/logging.cpp' || echo '$(srcdir)/'`base/logging.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) base/$(DEPDIR)/libbase_la-logging.Tpo base/$(DEPDIR)/libbase_la-logging.Plo
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='base/logging.cpp' object='base/libbase_la-logging.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -c -o base/libbase_la-logging.lo `test -f 'base/logging.cpp' || echo '$(srcdir)/'`base/logging.cpp
+
+base/libbase_la-parsenetaddress.lo: base/parsenetaddress.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -MT base/libbase_la-parsenetaddress.lo -MD -MP -MF base/$(DEPDIR)/libbase_la-parsenetaddress.Tpo -c -o base/libbase_la-parsenetaddress.lo `test -f 'base/parsenetaddress.cpp' || echo '$(srcdir)/'`base/parsenetaddress.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) base/$(DEPDIR)/libbase_la-parsenetaddress.Tpo base/$(DEPDIR)/libbase_la-parsenetaddress.Plo
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='base/parsenetaddress.cpp' object='base/libbase_la-parsenetaddress.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -c -o base/libbase_la-parsenetaddress.lo `test -f 'base/parsenetaddress.cpp' || echo '$(srcdir)/'`base/parsenetaddress.cpp
+
+libcutils/libcutils_la-sockets.lo: libcutils/sockets.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CXXFLAGS) $(CXXFLAGS) -MT libcutils/libcutils_la-sockets.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-sockets.Tpo -c -o libcutils/libcutils_la-sockets.lo `test -f 'libcutils/sockets.cpp' || echo '$(srcdir)/'`libcutils/sockets.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-sockets.Tpo libcutils/$(DEPDIR)/libcutils_la-sockets.Plo
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='libcutils/sockets.cpp' object='libcutils/libcutils_la-sockets.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CXXFLAGS) $(CXXFLAGS) -c -o libcutils/libcutils_la-sockets.lo `test -f 'libcutils/sockets.cpp' || echo '$(srcdir)/'`libcutils/sockets.cpp
+
 mostlyclean-libtool:
 	-rm -f *.lo
 
 clean-libtool:
 	-rm -rf .libs _libs
+	-rm -rf base/.libs base/_libs
+	-rm -rf libcrypto_utils/.libs libcrypto_utils/_libs
 	-rm -rf libcutils/.libs libcutils/_libs
+	-rm -rf liblog/.libs liblog/_libs
 
 ID: $(am__tagged_files)
 	$(am__define_uniq_tagged_files); mkid -fID $$unique
@@ -639,8 +884,14 @@ clean-generic:
 distclean-generic:
 	-test -z "$(CONFIG_CLEAN_FILES)" || rm -f $(CONFIG_CLEAN_FILES)
 	-test . = "$(srcdir)" || test -z "$(CONFIG_CLEAN_VPATH_FILES)" || rm -f $(CONFIG_CLEAN_VPATH_FILES)
+	-rm -f base/$(DEPDIR)/$(am__dirstamp)
+	-rm -f base/$(am__dirstamp)
+	-rm -f libcrypto_utils/$(DEPDIR)/$(am__dirstamp)
+	-rm -f libcrypto_utils/$(am__dirstamp)
 	-rm -f libcutils/$(DEPDIR)/$(am__dirstamp)
 	-rm -f libcutils/$(am__dirstamp)
+	-rm -f liblog/$(DEPDIR)/$(am__dirstamp)
+	-rm -f liblog/$(am__dirstamp)
 
 maintainer-clean-generic:
 	@echo "This command is intended for maintainers to use"
@@ -651,7 +902,7 @@ clean-am: clean-generic clean-libLTLIBRARIES clean-libtool \
 	mostlyclean-am
 
 distclean: distclean-am
-	-rm -rf libcutils/$(DEPDIR)
+	-rm -rf base/$(DEPDIR) libcrypto_utils/$(DEPDIR) libcutils/$(DEPDIR) liblog/$(DEPDIR)
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-tags
@@ -697,7 +948,7 @@ install-ps-am:
 installcheck-am:
 
 maintainer-clean: maintainer-clean-am
-	-rm -rf libcutils/$(DEPDIR)
+	-rm -rf base/$(DEPDIR) libcrypto_utils/$(DEPDIR) libcutils/$(DEPDIR) liblog/$(DEPDIR)
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 

@@ -14,5 +14,6 @@ libtool
 *.la
 .libs
 .deps
+.dirstamp
 src/arm_adb
 src/arm_adb-main.o

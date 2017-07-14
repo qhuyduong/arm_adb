@@ -31,12 +31,12 @@
 #include <vector>
 
 #if !ADB_HOST
-#include "cutils/properties.h"
+#include <android-base/properties.h>
+#include <log/log_properties.h>
 #endif
 
 #include "adb.h"
 #include "adb_io.h"
-#include "sysdeps/mutex.h"
 #include "transport.h"
 
 static std::recursive_mutex& local_socket_list_lock = *new std::recursive_mutex();
@@ -123,7 +123,7 @@ restart:
 }
 
 static int local_socket_enqueue(asocket* s, apacket* p) {
-    D("LS(%d): enqueue %d", s->id, p->len);
+    D("LS(%d): enqueue %zu", s->id, p->len);
 
     p->ptr = p->data;
 
@@ -196,7 +196,7 @@ static void local_socket_destroy(asocket* s) {
 
     /* dispose of any unwritten data */
     for (p = s->pkt_first; p; p = n) {
-        D("LS(%d): discarding %d bytes", s->id, p->len);
+        D("LS(%d): discarding %zu bytes", s->id, p->len);
         n = p->next;
         put_apacket(p);
     }
@@ -306,7 +306,7 @@ static void local_socket_event_func(int fd, unsigned ev, void* _s) {
 
     if (ev & FDE_READ) {
         apacket* p = get_apacket();
-        unsigned char* x = p->data;
+        char* x = p->data;
         const size_t max_payload = s->get_max_payload();
         size_t avail = max_payload;
         int r = 0;
@@ -410,19 +410,14 @@ asocket* create_local_service_socket(const char* name, const atransport* transpo
 #endif
     int fd = service_to_fd(name, transport);
     if (fd < 0) {
-        return 0;
+        return nullptr;
     }
 
     asocket* s = create_local_socket(fd);
     D("LS(%d): bound to '%s' via %d", s->id, name, fd);
 
 #if !ADB_HOST
-    char debug[PROPERTY_VALUE_MAX];
-    if (!strncmp(name, "root:", 5)) {
-        property_get("ro.debuggable", debug, "");
-    }
-
-    if ((!strncmp(name, "root:", 5) && getuid() != 0 && strcmp(debug, "1") == 0) ||
+    if ((!strncmp(name, "root:", 5) && getuid() != 0 && __android_log_is_debuggable()) ||
         (!strncmp(name, "unroot:", 7) && getuid() == 0) ||
         !strncmp(name, "usb:", 4) ||
         !strncmp(name, "tcpip:", 6)) {
@@ -554,7 +549,7 @@ static void local_socket_close_notify(asocket* s) {
     s->close(s);
 }
 
-static unsigned unhex(unsigned char* s, int len) {
+static unsigned unhex(char* s, int len) {
     unsigned n = 0, c;
 
     while (len-- > 0) {
@@ -623,21 +618,32 @@ char* skip_host_serial(char* service) {
         service += 4;
     }
 
-    char* first_colon = strchr(service, ':');
-    if (!first_colon) {
+    // Check for an IPv6 address. `adb connect` creates the serial number from the canonical
+    // network address so it will always have the [] delimiters.
+    if (service[0] == '[') {
+        char* ipv6_end = strchr(service, ']');
+        if (ipv6_end != nullptr) {
+            service = ipv6_end;
+        }
+    }
+
+    // The next colon we find must either begin the port field or the command field.
+    char* colon_ptr = strchr(service, ':');
+    if (!colon_ptr) {
         // No colon in service string.
         return nullptr;
     }
 
-    char* serial_end = first_colon;
+    // If the next field is only decimal digits and ends with another colon, it's a port.
+    char* serial_end = colon_ptr;
     if (isdigit(serial_end[1])) {
         serial_end++;
         while (*serial_end && isdigit(*serial_end)) {
             serial_end++;
         }
         if (*serial_end != ':') {
-            // Something other than numbers was found, reset the end.
-            serial_end = first_colon;
+            // Something other than "<port>:" was found, this must be the command field instead.
+            serial_end = colon_ptr;
         }
     }
     return serial_end;
@@ -655,7 +661,7 @@ static int smart_socket_enqueue(asocket* s, apacket* p) {
     TransportType type = kTransportAny;
 #endif
 
-    D("SS(%d): enqueue %d", s->id, p->len);
+    D("SS(%d): enqueue %zu", s->id, p->len);
 
     if (s->pkt_first == 0) {
         s->pkt_first = p;
@@ -680,7 +686,7 @@ static int smart_socket_enqueue(asocket* s, apacket* p) {
     }
 
     len = unhex(p->data, 4);
-    if ((len < 1) || (len > MAX_PAYLOAD_V1)) {
+    if ((len < 1) || (len > MAX_PAYLOAD)) {
         D("SS(%d): bad size (%d)", s->id, len);
         goto fail;
     }
@@ -688,7 +694,7 @@ static int smart_socket_enqueue(asocket* s, apacket* p) {
     D("SS(%d): len is %d", s->id, len);
     /* can't do anything until we have the full header */
     if ((len + 4) > p->len) {
-        D("SS(%d): waiting for %d more bytes", s->id, len + 4 - p->len);
+        D("SS(%d): waiting for %zu more bytes", s->id, len + 4 - p->len);
         return 0;
     }
 
@@ -785,11 +791,14 @@ static int smart_socket_enqueue(asocket* s, apacket* p) {
     }
 #endif
 
-    if (!(s->transport) || (s->transport->connection_state == kCsOffline)) {
+    if (!s->transport) {
+        SendFail(s->peer->fd, "device offline (no transport)");
+        goto fail;
+    } else if (s->transport->GetConnectionState() == kCsOffline) {
         /* if there's no remote we fail the connection
          ** right here and terminate it
          */
-        SendFail(s->peer->fd, "device offline (x)");
+        SendFail(s->peer->fd, "device offline (transport offline)");
         goto fail;
     }
 

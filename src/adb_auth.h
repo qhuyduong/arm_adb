@@ -19,14 +19,10 @@
 
 #include "adb.h"
 
-extern bool auth_required;
+#include <deque>
+#include <memory>
 
-int adb_auth_keygen(const char* filename);
-void adb_auth_verified(atransport *t);
-
-void send_auth_request(atransport *t);
-void send_auth_response(uint8_t *token, size_t token_size, atransport *t);
-void send_auth_publickey(atransport *t);
+#include <openssl/rsa.h>
 
 /* AUTH packets first argument */
 /* Request */
@@ -37,37 +33,26 @@ void send_auth_publickey(atransport *t);
 
 #if ADB_HOST
 
-void adb_auth_init(void);
-int adb_auth_sign(void *key, const unsigned char* token, size_t token_size,
-                  unsigned char* sig);
-void *adb_auth_nextkey(void *current);
-std::string adb_auth_get_userkey();
+void adb_auth_init();
 
-static inline int adb_auth_generate_token(void *token, size_t token_size) {
-    return 0;
-}
-static inline int adb_auth_verify(void *token, size_t token_size,
-                                  void *sig, int siglen) {
-    return 0;
-}
-static inline void adb_auth_confirm_key(unsigned char *data, size_t len,
-                                        atransport *t) {}
+int adb_auth_keygen(const char* filename);
+std::string adb_auth_get_userkey();
+std::deque<std::shared_ptr<RSA>> adb_auth_get_private_keys();
+
+void send_auth_response(const char* token, size_t token_size, atransport* t);
 
 #else // !ADB_HOST
 
-static inline int adb_auth_sign(void* key, const unsigned char* token,
-                                size_t token_size, unsigned char* sig) {
-    return 0;
-}
-static inline void *adb_auth_nextkey(void *current) { return NULL; }
-static inline std::string adb_auth_get_userkey() { return ""; }
+extern bool auth_required;
 
 void adbd_auth_init(void);
+void adbd_auth_verified(atransport *t);
+
 void adbd_cloexec_auth_socket();
-int adb_auth_generate_token(void *token, size_t token_size);
-int adb_auth_verify(uint8_t* token, size_t token_size,
-                    uint8_t* sig, int siglen);
-void adb_auth_confirm_key(unsigned char *data, size_t len, atransport *t);
+bool adbd_auth_verify(const char* token, size_t token_size, const char* sig, int sig_len);
+void adbd_auth_confirm_key(const char* data, size_t len, atransport* t);
+
+void send_auth_request(atransport *t);
 
 #endif // ADB_HOST
 

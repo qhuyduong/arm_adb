@@ -31,10 +31,6 @@
 
 #include <cutils/sockets.h>
 
-#if !defined(_WIN32)
-#include <netinet/in.h>
-#endif
-
 int socket_get_local_port(cutils_socket_t sock) {
     sockaddr_storage addr;
     socklen_t addr_size = sizeof(addr);

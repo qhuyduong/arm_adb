@@ -23,14 +23,14 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/ashmem.h>
 #include <pthread.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <unistd.h>
-
-#include <linux/ashmem.h>
 
 #include <cutils/ashmem.h>
 #include <log/log.h>
@@ -85,7 +85,7 @@ static int __ashmem_open()
 }
 
 /* Make sure file descriptor references ashmem, negative number means false */
-static int __ashmem_is_ashmem(int fd)
+static int __ashmem_is_ashmem(int fd, int fatal)
 {
     dev_t rdev;
     struct stat st;
@@ -117,20 +117,27 @@ static int __ashmem_is_ashmem(int fd)
         }
     }
 
-    if (rdev) {
-        LOG_ALWAYS_FATAL("illegal fd=%d mode=0%o rdev=%d:%d expected 0%o %d:%d",
-          fd, st.st_mode, major(st.st_rdev), minor(st.st_rdev),
-          S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IRGRP,
-          major(rdev), minor(rdev));
-    } else {
-        LOG_ALWAYS_FATAL("illegal fd=%d mode=0%o rdev=%d:%d expected 0%o",
-          fd, st.st_mode, major(st.st_rdev), minor(st.st_rdev),
-          S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IRGRP);
+    if (fatal) {
+        if (rdev) {
+            LOG_ALWAYS_FATAL("illegal fd=%d mode=0%o rdev=%d:%d expected 0%o %d:%d",
+              fd, st.st_mode, major(st.st_rdev), minor(st.st_rdev),
+              S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IRGRP,
+              major(rdev), minor(rdev));
+        } else {
+            LOG_ALWAYS_FATAL("illegal fd=%d mode=0%o rdev=%d:%d expected 0%o",
+              fd, st.st_mode, major(st.st_rdev), minor(st.st_rdev),
+              S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IRGRP);
+        }
+        /* NOTREACHED */
     }
-    /* NOTREACHED */
 
     errno = ENOTTY;
     return -1;
+}
+
+int ashmem_valid(int fd)
+{
+    return __ashmem_is_ashmem(fd, 0) >= 0;
 }
 
 /*
@@ -175,7 +182,7 @@ error:
 
 int ashmem_set_prot_region(int fd, int prot)
 {
-    int ret = __ashmem_is_ashmem(fd);
+    int ret = __ashmem_is_ashmem(fd, 1);
     if (ret < 0) {
         return ret;
     }
@@ -187,7 +194,7 @@ int ashmem_pin_region(int fd, size_t offset, size_t len)
 {
     struct ashmem_pin pin = { offset, len };
 
-    int ret = __ashmem_is_ashmem(fd);
+    int ret = __ashmem_is_ashmem(fd, 1);
     if (ret < 0) {
         return ret;
     }
@@ -199,7 +206,7 @@ int ashmem_unpin_region(int fd, size_t offset, size_t len)
 {
     struct ashmem_pin pin = { offset, len };
 
-    int ret = __ashmem_is_ashmem(fd);
+    int ret = __ashmem_is_ashmem(fd, 1);
     if (ret < 0) {
         return ret;
     }
@@ -209,7 +216,7 @@ int ashmem_unpin_region(int fd, size_t offset, size_t len)
 
 int ashmem_get_size_region(int fd)
 {
-    int ret = __ashmem_is_ashmem(fd);
+    int ret = __ashmem_is_ashmem(fd, 1);
     if (ret < 0) {
         return ret;
     }

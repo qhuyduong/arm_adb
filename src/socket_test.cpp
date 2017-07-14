@@ -22,6 +22,7 @@
 #include <limits>
 #include <queue>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <unistd.h>
@@ -31,6 +32,7 @@
 #include "fdevent_test.h"
 #include "socket.h"
 #include "sysdeps.h"
+#include "sysdeps/chrono.h"
 
 struct ThreadArg {
     int first_read_fd;
@@ -40,11 +42,7 @@ struct ThreadArg {
 
 class LocalSocketTest : public FdeventTest {};
 
-static void FdEventThreadFunc(void*) {
-    fdevent_loop();
-}
-
-const size_t SLEEP_FOR_FDEVENT_IN_MS = 100;
+constexpr auto SLEEP_FOR_FDEVENT = 100ms;
 
 TEST_F(LocalSocketTest, smoke) {
     // Join two socketpairs with a chain of intermediate socketpairs.
@@ -86,8 +84,7 @@ TEST_F(LocalSocketTest, smoke) {
     connect(prev_tail, end);
 
     PrepareThread();
-    adb_thread_t thread;
-    ASSERT_TRUE(adb_thread_create(FdEventThreadFunc, nullptr, &thread));
+    std::thread thread(fdevent_loop);
 
     for (size_t i = 0; i < MESSAGE_LOOP_COUNT; ++i) {
         std::string read_buffer = MESSAGE;
@@ -101,7 +98,7 @@ TEST_F(LocalSocketTest, smoke) {
     ASSERT_EQ(0, adb_close(last[1]));
 
     // Wait until the local sockets are closed.
-    adb_sleep_ms(SLEEP_FOR_FDEVENT_IN_MS);
+    std::this_thread::sleep_for(SLEEP_FOR_FDEVENT);
     ASSERT_EQ(GetAdditionalLocalSocketCount(), fdevent_installed_count());
     TerminateThread(thread);
 }
@@ -150,16 +147,14 @@ TEST_F(LocalSocketTest, close_socket_with_packet) {
     arg.cause_close_fd = cause_close_fd[1];
 
     PrepareThread();
-    adb_thread_t thread;
-    ASSERT_TRUE(adb_thread_create(reinterpret_cast<void (*)(void*)>(CloseWithPacketThreadFunc),
-                                  &arg, &thread));
+    std::thread thread(CloseWithPacketThreadFunc, &arg);
     // Wait until the fdevent_loop() starts.
-    adb_sleep_ms(SLEEP_FOR_FDEVENT_IN_MS);
+    std::this_thread::sleep_for(SLEEP_FOR_FDEVENT);
     ASSERT_EQ(0, adb_close(cause_close_fd[0]));
-    adb_sleep_ms(SLEEP_FOR_FDEVENT_IN_MS);
+    std::this_thread::sleep_for(SLEEP_FOR_FDEVENT);
     EXPECT_EQ(1u + GetAdditionalLocalSocketCount(), fdevent_installed_count());
     ASSERT_EQ(0, adb_close(socket_fd[0]));
-    adb_sleep_ms(SLEEP_FOR_FDEVENT_IN_MS);
+    std::this_thread::sleep_for(SLEEP_FOR_FDEVENT);
     ASSERT_EQ(GetAdditionalLocalSocketCount(), fdevent_installed_count());
     TerminateThread(thread);
 }
@@ -175,13 +170,11 @@ TEST_F(LocalSocketTest, read_from_closing_socket) {
     arg.cause_close_fd = cause_close_fd[1];
 
     PrepareThread();
-    adb_thread_t thread;
-    ASSERT_TRUE(adb_thread_create(reinterpret_cast<void (*)(void*)>(CloseWithPacketThreadFunc),
-                                  &arg, &thread));
+    std::thread thread(CloseWithPacketThreadFunc, &arg);
     // Wait until the fdevent_loop() starts.
-    adb_sleep_ms(SLEEP_FOR_FDEVENT_IN_MS);
+    std::this_thread::sleep_for(SLEEP_FOR_FDEVENT);
     ASSERT_EQ(0, adb_close(cause_close_fd[0]));
-    adb_sleep_ms(SLEEP_FOR_FDEVENT_IN_MS);
+    std::this_thread::sleep_for(SLEEP_FOR_FDEVENT);
     EXPECT_EQ(1u + GetAdditionalLocalSocketCount(), fdevent_installed_count());
 
     // Verify if we can read successfully.
@@ -190,7 +183,7 @@ TEST_F(LocalSocketTest, read_from_closing_socket) {
     ASSERT_EQ(true, ReadFdExactly(socket_fd[0], buf.data(), buf.size()));
     ASSERT_EQ(0, adb_close(socket_fd[0]));
 
-    adb_sleep_ms(SLEEP_FOR_FDEVENT_IN_MS);
+    std::this_thread::sleep_for(SLEEP_FOR_FDEVENT);
     ASSERT_EQ(GetAdditionalLocalSocketCount(), fdevent_installed_count());
     TerminateThread(thread);
 }
@@ -209,16 +202,13 @@ TEST_F(LocalSocketTest, write_error_when_having_packets) {
     arg.cause_close_fd = cause_close_fd[1];
 
     PrepareThread();
-    adb_thread_t thread;
-    ASSERT_TRUE(adb_thread_create(reinterpret_cast<void (*)(void*)>(CloseWithPacketThreadFunc),
-                                  &arg, &thread));
-
+    std::thread thread(CloseWithPacketThreadFunc, &arg);
     // Wait until the fdevent_loop() starts.
-    adb_sleep_ms(SLEEP_FOR_FDEVENT_IN_MS);
+    std::this_thread::sleep_for(SLEEP_FOR_FDEVENT);
     EXPECT_EQ(2u + GetAdditionalLocalSocketCount(), fdevent_installed_count());
     ASSERT_EQ(0, adb_close(socket_fd[0]));
 
-    adb_sleep_ms(SLEEP_FOR_FDEVENT_IN_MS);
+    std::this_thread::sleep_for(SLEEP_FOR_FDEVENT);
     ASSERT_EQ(GetAdditionalLocalSocketCount(), fdevent_installed_count());
     TerminateThread(thread);
 }
@@ -229,7 +219,7 @@ static void ClientThreadFunc() {
     std::string error;
     int fd = network_loopback_client(5038, SOCK_STREAM, &error);
     ASSERT_GE(fd, 0) << error;
-    adb_sleep_ms(200);
+    std::this_thread::sleep_for(200ms);
     ASSERT_EQ(0, adb_close(fd));
 }
 
@@ -250,31 +240,24 @@ TEST_F(LocalSocketTest, close_socket_in_CLOSE_WAIT_state) {
     int listen_fd = network_inaddr_any_server(5038, SOCK_STREAM, &error);
     ASSERT_GE(listen_fd, 0);
 
-    adb_thread_t client_thread;
-    ASSERT_TRUE(adb_thread_create(reinterpret_cast<void (*)(void*)>(ClientThreadFunc), nullptr,
-                                  &client_thread));
+    std::thread client_thread(ClientThreadFunc);
 
-    struct sockaddr addr;
-    socklen_t alen;
-    alen = sizeof(addr);
-    int accept_fd = adb_socket_accept(listen_fd, &addr, &alen);
+    int accept_fd = adb_socket_accept(listen_fd, nullptr, nullptr);
     ASSERT_GE(accept_fd, 0);
     CloseRdHupSocketArg arg;
     arg.socket_fd = accept_fd;
 
     PrepareThread();
-    adb_thread_t thread;
-    ASSERT_TRUE(adb_thread_create(reinterpret_cast<void (*)(void*)>(CloseRdHupSocketThreadFunc),
-                                  &arg, &thread));
+    std::thread thread(CloseRdHupSocketThreadFunc, &arg);
 
     // Wait until the fdevent_loop() starts.
-    adb_sleep_ms(SLEEP_FOR_FDEVENT_IN_MS);
+    std::this_thread::sleep_for(SLEEP_FOR_FDEVENT);
     EXPECT_EQ(1u + GetAdditionalLocalSocketCount(), fdevent_installed_count());
 
     // Wait until the client closes its socket.
-    ASSERT_TRUE(adb_thread_join(client_thread));
+    client_thread.join();
 
-    adb_sleep_ms(SLEEP_FOR_FDEVENT_IN_MS);
+    std::this_thread::sleep_for(SLEEP_FOR_FDEVENT);
     ASSERT_EQ(GetAdditionalLocalSocketCount(), fdevent_installed_count());
     TerminateThread(thread);
 }
@@ -310,6 +293,17 @@ TEST(socket_test, test_skip_host_serial) {
         // Don't register a port unless it's all numbers and ends with ':'.
         VerifySkipHostSerial(protocol + "foo:123", ":123");
         VerifySkipHostSerial(protocol + "foo:123bar:baz", ":123bar:baz");
+
+        VerifySkipHostSerial(protocol + "100.100.100.100:5555:foo", ":foo");
+        VerifySkipHostSerial(protocol + "[0123:4567:89ab:CDEF:0:9:a:f]:5555:foo", ":foo");
+        VerifySkipHostSerial(protocol + "[::1]:5555:foo", ":foo");
+
+        // If we can't find both [] then treat it as a normal serial with [ in it.
+        VerifySkipHostSerial(protocol + "[0123:foo", ":foo");
+
+        // Don't be fooled by random IPv6 addresses in the command string.
+        VerifySkipHostSerial(protocol + "foo:ping [0123:4567:89ab:CDEF:0:9:a:f]:5555",
+                             ":ping [0123:4567:89ab:CDEF:0:9:a:f]:5555");
     }
 }
 

@@ -31,16 +31,21 @@
 #include <unistd.h>
 #include <utime.h>
 
-#include "adb.h"
-#include "adb_io.h"
-#include "adb_utils.h"
-#include "private/android_filesystem_config.h"
-#include "security_log_tags.h"
-
+#include <android-base/file.h>
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
-#include <log/log.h>
+#include <private/android_filesystem_config.h>
+#include <private/android_logger.h>
 #include <selinux/android.h>
+
+#include "adb.h"
+#include "adb_io.h"
+#include "adb_trace.h"
+#include "adb_utils.h"
+#include "security_log_tags.h"
+#include "sysdeps/errno.h"
+
+using android::base::StringPrintf;
 
 static bool should_use_fs_config(const std::string& path) {
     // TODO: use fs_config to configure permissions on /data.
@@ -98,18 +103,47 @@ static bool secure_mkdirs(const std::string& path) {
     return true;
 }
 
-static bool do_stat(int s, const char* path) {
-    syncmsg msg;
-    msg.stat.id = ID_STAT;
+static bool do_lstat_v1(int s, const char* path) {
+    syncmsg msg = {};
+    msg.stat_v1.id = ID_LSTAT_V1;
 
     struct stat st = {};
-    // TODO: add a way to report that the stat failed!
     lstat(path, &st);
-    msg.stat.mode = st.st_mode;
-    msg.stat.size = st.st_size;
-    msg.stat.time = st.st_mtime;
+    msg.stat_v1.mode = st.st_mode;
+    msg.stat_v1.size = st.st_size;
+    msg.stat_v1.time = st.st_mtime;
+    return WriteFdExactly(s, &msg.stat_v1, sizeof(msg.stat_v1));
+}
 
-    return WriteFdExactly(s, &msg.stat, sizeof(msg.stat));
+static bool do_stat_v2(int s, uint32_t id, const char* path) {
+    syncmsg msg = {};
+    msg.stat_v2.id = id;
+
+    decltype(&stat) stat_fn;
+    if (id == ID_STAT_V2) {
+        stat_fn = stat;
+    } else {
+        stat_fn = lstat;
+    }
+
+    struct stat st = {};
+    int rc = stat_fn(path, &st);
+    if (rc == -1) {
+        msg.stat_v2.error = errno_to_wire(errno);
+    } else {
+        msg.stat_v2.dev = st.st_dev;
+        msg.stat_v2.ino = st.st_ino;
+        msg.stat_v2.mode = st.st_mode;
+        msg.stat_v2.nlink = st.st_nlink;
+        msg.stat_v2.uid = st.st_uid;
+        msg.stat_v2.gid = st.st_gid;
+        msg.stat_v2.size = st.st_size;
+        msg.stat_v2.atime = st.st_atime;
+        msg.stat_v2.mtime = st.st_mtime;
+        msg.stat_v2.ctime = st.st_ctime;
+    }
+
+    return WriteFdExactly(s, &msg.stat_v2, sizeof(msg.stat_v2));
 }
 
 static bool do_list(int s, const char* path) {
@@ -122,7 +156,7 @@ static bool do_list(int s, const char* path) {
     if (!d) goto done;
 
     while ((de = readdir(d.get()))) {
-        std::string filename(android::base::StringPrintf("%s/%s", path, de->d_name));
+        std::string filename(StringPrintf("%s/%s", path, de->d_name));
 
         struct stat st;
         if (lstat(filename.c_str(), &st) == 0) {
@@ -161,7 +195,7 @@ static bool SendSyncFail(int fd, const std::string& reason) {
 }
 
 static bool SendSyncFailErrno(int fd, const std::string& reason) {
-    return SendSyncFail(fd, android::base::StringPrintf("%s: %s", reason.c_str(), strerror(errno)));
+    return SendSyncFail(fd, StringPrintf("%s: %s", reason.c_str(), strerror(errno)));
 }
 
 static bool handle_send_file(int s, const char* path, uid_t uid, gid_t gid, uint64_t capabilities,
@@ -173,7 +207,7 @@ static bool handle_send_file(int s, const char* path, uid_t uid, gid_t gid, uint
 
     int fd = adb_open_mode(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode);
     if (fd < 0 && errno == ENOENT) {
-        if (!secure_mkdirs(adb_dirname(path))) {
+        if (!secure_mkdirs(android::base::Dirname(path))) {
             SendSyncFailErrno(s, "secure_mkdirs failed");
             goto fail;
         }
@@ -198,11 +232,6 @@ static bool handle_send_file(int s, const char* path, uid_t uid, gid_t gid, uint
         // Ignore the result of calling fchmod. It's not supported
         // by all filesystems, so we don't check for success. b/12441485
         fchmod(fd, mode);
-
-        if (!update_capabilities(path, capabilities)) {
-            SendSyncFailErrno(s, "update_capabilities failed");
-            goto fail;
-        }
     }
 
     while (true) {
@@ -231,6 +260,11 @@ static bool handle_send_file(int s, const char* path, uid_t uid, gid_t gid, uint
     }
 
     adb_close(fd);
+
+    if (!update_capabilities(path, capabilities)) {
+        SendSyncFailErrno(s, "update_capabilities failed");
+        goto fail;
+    }
 
     utimbuf u;
     u.actime = timestamp;
@@ -300,7 +334,7 @@ static bool handle_send_link(int s, const std::string& path, std::vector<char>& 
 
     ret = symlink(&buffer[0], path.c_str());
     if (ret && errno == ENOENT) {
-        if (!secure_mkdirs(adb_dirname(path))) {
+        if (!secure_mkdirs(android::base::Dirname(path))) {
             SendSyncFailErrno(s, "secure_mkdirs failed");
             return false;
         }
@@ -403,9 +437,31 @@ static bool do_recv(int s, const char* path, std::vector<char>& buffer) {
     return WriteFdExactly(s, &msg.data, sizeof(msg.data));
 }
 
+static const char* sync_id_to_name(uint32_t id) {
+  switch (id) {
+    case ID_LSTAT_V1:
+      return "lstat_v1";
+    case ID_LSTAT_V2:
+      return "lstat_v2";
+    case ID_STAT_V2:
+      return "stat_v2";
+    case ID_LIST:
+      return "list";
+    case ID_SEND:
+      return "send";
+    case ID_RECV:
+      return "recv";
+    case ID_QUIT:
+        return "quit";
+    default:
+        return "???";
+  }
+}
+
 static bool handle_sync_command(int fd, std::vector<char>& buffer) {
     D("sync: waiting for request");
 
+    ATRACE_CALL();
     SyncRequest request;
     if (!ReadFdExactly(fd, &request, sizeof(request))) {
         SendSyncFail(fd, "command read failure");
@@ -423,34 +479,39 @@ static bool handle_sync_command(int fd, std::vector<char>& buffer) {
     }
     name[path_length] = 0;
 
-    const char* id = reinterpret_cast<const char*>(&request.id);
-    D("sync: '%.4s' '%s'", id, name);
+    std::string id_name = sync_id_to_name(request.id);
+    std::string trace_name = StringPrintf("%s(%s)", id_name.c_str(), name);
+    ATRACE_NAME(trace_name.c_str());
 
+    D("sync: %s('%s')", id_name.c_str(), name);
     switch (request.id) {
-      case ID_STAT:
-        if (!do_stat(fd, name)) return false;
-        break;
-      case ID_LIST:
-        if (!do_list(fd, name)) return false;
-        break;
-      case ID_SEND:
-        if (!do_send(fd, name, buffer)) return false;
-        break;
-      case ID_RECV:
-        if (!do_recv(fd, name, buffer)) return false;
-        break;
-      case ID_QUIT:
-        return false;
-      default:
-        SendSyncFail(fd, android::base::StringPrintf("unknown command '%.4s' (%08x)",
-                                                     id, request.id));
-        return false;
+        case ID_LSTAT_V1:
+            if (!do_lstat_v1(fd, name)) return false;
+            break;
+        case ID_LSTAT_V2:
+        case ID_STAT_V2:
+            if (!do_stat_v2(fd, request.id, name)) return false;
+            break;
+        case ID_LIST:
+            if (!do_list(fd, name)) return false;
+            break;
+        case ID_SEND:
+            if (!do_send(fd, name, buffer)) return false;
+            break;
+        case ID_RECV:
+            if (!do_recv(fd, name, buffer)) return false;
+            break;
+        case ID_QUIT:
+            return false;
+        default:
+            SendSyncFail(fd, StringPrintf("unknown command %08x", request.id));
+            return false;
     }
 
     return true;
 }
 
-void file_sync_service(int fd, void* cookie) {
+void file_sync_service(int fd, void*) {
     std::vector<char> buffer(SYNC_DATA_MAX);
 
     while (handle_sync_command(fd, buffer)) {

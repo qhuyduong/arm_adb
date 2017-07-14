@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#define LOG_TAG "cutils-trace"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -23,12 +25,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+
 #include <cutils/compiler.h>
 #include <cutils/properties.h>
 #include <cutils/trace.h>
-
-#define LOG_TAG "cutils-trace"
 #include <log/log.h>
+#include <log/log_properties.h>
 
 /**
  * Maximum size of a message that can be logged to the trace buffer.
@@ -66,24 +68,17 @@ void atrace_set_tracing_enabled(bool enabled)
 // values listed in the app_cmdlines property.
 static bool atrace_is_cmdline_match(const char* cmdline)
 {
+    int count = property_get_int32("debug.atrace.app_number", 0);
+
+    char buf[PROPERTY_KEY_MAX];
     char value[PROPERTY_VALUE_MAX];
-    char* start = value;
 
-    property_get("debug.atrace.app_cmdlines", value, "");
-
-    while (start != NULL) {
-        char* end = strchr(start, ',');
-
-        if (end != NULL) {
-            *end = '\0';
-            end++;
-        }
-
-        if (strcmp(cmdline, start) == 0) {
+    for (int i = 0; i < count; i++) {
+        snprintf(buf, sizeof(buf), "debug.atrace.app_%d", i);
+        property_get(buf, value, "");
+        if (strcmp(value, cmdline) == 0) {
             return true;
         }
-
-        start = end;
     }
 
     return false;
@@ -92,15 +87,8 @@ static bool atrace_is_cmdline_match(const char* cmdline)
 // Determine whether application-level tracing is enabled for this process.
 static bool atrace_is_app_tracing_enabled()
 {
-    bool sys_debuggable = false;
-    char value[PROPERTY_VALUE_MAX];
+    bool sys_debuggable = __android_log_is_debuggable();
     bool result = false;
-
-    // Check whether the system is debuggable.
-    property_get("ro.debuggable", value, "0");
-    if (value[0] == '1') {
-        sys_debuggable = true;
-    }
 
     if (sys_debuggable || atrace_is_debuggable) {
         // Check whether tracing is enabled for this process.
@@ -201,6 +189,12 @@ void atrace_begin_body(const char* name)
         len = sizeof(buf) - 1;
     }
     write(atrace_marker_fd, buf, len);
+}
+
+void atrace_end_body()
+{
+    char c = 'E';
+    write(atrace_marker_fd, &c, 1);
 }
 
 #define WRITE_MSG(format_begin, format_end, pid, name, value) { \

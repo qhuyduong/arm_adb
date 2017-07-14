@@ -19,11 +19,18 @@
 
 #include <sys/types.h>
 
+#include <atomic>
+#include <deque>
+#include <functional>
 #include <list>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_set>
 
 #include "adb.h"
+
+#include <openssl/rsa.h>
 
 typedef std::unordered_set<std::string> FeatureSet;
 
@@ -41,6 +48,11 @@ bool CanUseFeature(const FeatureSet& feature_set, const std::string& feature);
 extern const char* const kFeatureShell2;
 // The 'cmd' command is available
 extern const char* const kFeatureCmd;
+extern const char* const kFeatureStat2;
+// The server is running with libusb enabled.
+extern const char* const kFeatureLibusb;
+// The server supports `push --sync`.
+extern const char* const kFeaturePushSync;
 
 class atransport {
 public:
@@ -49,31 +61,35 @@ public:
     // class in one go is a very large change. Given how bad our testing is,
     // it's better to do this piece by piece.
 
-    atransport() {
+    atransport(ConnectionState state = kCsOffline) : ref_count(0), connection_state_(state) {
         transport_fde = {};
         protocol_version = A_VERSION;
         max_payload = MAX_PAYLOAD;
     }
-
     virtual ~atransport() {}
 
     int (*read_from_remote)(apacket* p, atransport* t) = nullptr;
-    int (*write_to_remote)(apacket* p, atransport* t) = nullptr;
     void (*close)(atransport* t) = nullptr;
+
+    void SetWriteFunction(int (*write_func)(apacket*, atransport*)) { write_func_ = write_func; }
     void SetKickFunction(void (*kick_func)(atransport*)) {
         kick_func_ = kick_func;
     }
     bool IsKicked() {
         return kicked_;
     }
+    int Write(apacket* p);
     void Kick();
+
+    // ConnectionState can be read by all threads, but can only be written in the main thread.
+    ConnectionState GetConnectionState() const;
+    void SetConnectionState(ConnectionState state);
 
     int fd = -1;
     int transport_socket = -1;
     fdevent transport_fde;
-    size_t ref_count = 0;
+    std::atomic<size_t> ref_count;
     uint32_t sync_token = 0;
-    ConnectionState connection_state = kCsOffline;
     bool online = false;
     TransportType type = kTransportAny;
 
@@ -104,10 +120,15 @@ public:
         return type == kTransportLocal && local_port_for_emulator_ == -1;
     }
 
-    void* key = nullptr;
-    unsigned char token[TOKEN_SIZE] = {};
+#if ADB_HOST
+    std::shared_ptr<RSA> NextKey();
+    bool SetSendConnectOnError();
+#endif
+
+    char token[TOKEN_SIZE] = {};
     size_t failed_auth_attempts = 0;
 
+    const std::string serial_name() const { return serial ? serial : "<unknown>"; }
     const std::string connection_state_name() const;
 
     void update_version(int version, size_t payload);
@@ -146,6 +167,7 @@ private:
     int local_port_for_emulator_ = -1;
     bool kicked_ = false;
     void (*kick_func_)(atransport*) = nullptr;
+    int (*write_func_)(apacket*, atransport*) = nullptr;
 
     // A set of features transmitted in the banner with the initial connection.
     // This is stored in the banner as 'features=feature0,feature1,etc'.
@@ -155,6 +177,13 @@ private:
 
     // A list of adisconnect callbacks called when the transport is kicked.
     std::list<adisconnect*> disconnects_;
+
+    std::atomic<ConnectionState> connection_state_;
+#if ADB_HOST
+    std::deque<std::shared_ptr<RSA>> keys_;
+    std::mutex write_msg_lock_;
+    bool has_send_connect_on_error_ = false;
+#endif
 
     DISALLOW_COPY_AND_ASSIGN(atransport);
 };
@@ -166,18 +195,27 @@ private:
  * is set to true and nullptr returned.
  * If no suitable transport is found, error is set and nullptr returned.
  */
-atransport* acquire_one_transport(TransportType type, const char* serial,
-                                  bool* is_ambiguous, std::string* error_out);
+atransport* acquire_one_transport(TransportType type, const char* serial, bool* is_ambiguous,
+                                  std::string* error_out, bool accept_any_state = false);
 void kick_transport(atransport* t);
 void update_transports(void);
 
+// Iterates across all of the current and pending transports.
+// Stops iteration and returns false if fn returns false, otherwise returns true.
+bool iterate_transports(std::function<bool(const atransport*)> fn);
+
 void init_transport_registration(void);
+void init_mdns_transport_discovery(void);
 std::string list_transports(bool long_listing);
 atransport* find_transport(const char* serial);
 void kick_all_tcp_devices();
+void kick_all_transports();
 
 void register_usb_transport(usb_handle* h, const char* serial,
                             const char* devpath, unsigned writeable);
+
+/* Connect to a network address and register it as a device */
+void connect_device(const std::string& address, std::string* response);
 
 /* cause new transports to be init'd and added to the list */
 int register_socket_transport(int s, const char* serial, int port, int local);
@@ -185,11 +223,11 @@ int register_socket_transport(int s, const char* serial, int port, int local);
 // This should only be used for transports with connection_state == kCsNoPerm.
 void unregister_usb_transport(usb_handle* usb);
 
-int check_header(apacket* p, atransport* t);
-int check_data(apacket* p);
+bool check_header(apacket* p, atransport* t);
+bool check_data(apacket* p);
 
-/* for MacOS X cleanup */
 void close_usb_devices();
+void close_usb_devices(std::function<bool(const atransport*)> predicate);
 
 void send_packet(apacket* p, atransport* t);
 

@@ -31,6 +31,7 @@ import string
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 import mock
@@ -341,6 +342,13 @@ class ShellTest(DeviceTest):
         out = self.device.shell(['echo', 'foo'])[0]
         self.assertEqual(out, 'foo' + self.device.linesep)
 
+    def test_shell_command_length(self):
+        # Devices that have shell_v2 should be able to handle long commands.
+        if self.device.has_shell_protocol():
+            rc, out, err = self.device.shell_nocheck(['echo', 'x' * 16384])
+            self.assertEqual(rc, 0)
+            self.assertTrue(out == ('x' * 16384 + '\n'))
+
     def test_shell_nocheck_failure(self):
         rc, out, _ = self.device.shell_nocheck(['false'])
         self.assertNotEqual(rc, 0)
@@ -370,15 +378,8 @@ class ShellTest(DeviceTest):
     def test_pty_logic(self):
         """Tests that a PTY is allocated when it should be.
 
-        PTY allocation behavior should match ssh; some behavior requires
-        a terminal stdin to test so this test will be skipped if stdin
-        is not a terminal.
+        PTY allocation behavior should match ssh.
         """
-        if not self.device.has_shell_protocol():
-            raise unittest.SkipTest('PTY arguments unsupported on this device')
-        if not os.isatty(sys.stdin.fileno()):
-            raise unittest.SkipTest('PTY tests require stdin terminal')
-
         def check_pty(args):
             """Checks adb shell PTY allocation.
 
@@ -408,15 +409,33 @@ class ShellTest(DeviceTest):
         # -T: never allocate PTY.
         self.assertEqual((False, False), check_pty(['-T']))
 
-        # No args: PTY only if stdin is a terminal and shell is interactive,
-        # which is difficult to reliably test from a script.
-        self.assertEqual((False, False), check_pty([]))
+        # These tests require a new device.
+        if self.device.has_shell_protocol() and os.isatty(sys.stdin.fileno()):
+            # No args: PTY only if stdin is a terminal and shell is interactive,
+            # which is difficult to reliably test from a script.
+            self.assertEqual((False, False), check_pty([]))
 
-        # -t: PTY if stdin is a terminal.
-        self.assertEqual((True, False), check_pty(['-t']))
+            # -t: PTY if stdin is a terminal.
+            self.assertEqual((True, False), check_pty(['-t']))
 
         # -t -t: always allocate PTY.
         self.assertEqual((True, True), check_pty(['-t', '-t']))
+
+        # -tt: always allocate PTY, POSIX style (http://b/32216152).
+        self.assertEqual((True, True), check_pty(['-tt']))
+
+        # -ttt: ssh has weird even/odd behavior with multiple -t flags, but
+        # we follow the man page instead.
+        self.assertEqual((True, True), check_pty(['-ttt']))
+
+        # -ttx: -x and -tt aren't incompatible (though -Tx would be an error).
+        self.assertEqual((True, True), check_pty(['-ttx']))
+
+        # -Ttt: -tt cancels out -T.
+        self.assertEqual((True, True), check_pty(['-Ttt']))
+
+        # -ttT: -T cancels out -tt.
+        self.assertEqual((False, False), check_pty(['-ttT']))
 
     def test_shell_protocol(self):
         """Tests the shell protocol on the device.
@@ -472,8 +491,12 @@ class ShellTest(DeviceTest):
         self.device.shell(proc_query)
         os.kill(sleep_proc.pid, signal.SIGINT)
         sleep_proc.communicate()
-        self.assertEqual(1, self.device.shell_nocheck(proc_query)[0],
-                         'subprocess failed to terminate')
+
+        # It can take some time for the process to receive the signal and die.
+        end_time = time.time() + 3
+        while self.device.shell_nocheck(proc_query)[0] != 1:
+            self.assertFalse(time.time() > end_time,
+                             'subprocess failed to terminate in time')
 
     def test_non_interactive_stdin(self):
         """Tests that non-interactive shells send stdin."""
@@ -494,6 +517,37 @@ class ShellTest(DeviceTest):
             stdout, stderr = proc.communicate(input)
             self.assertEqual(input.splitlines(), stdout.splitlines())
             self.assertEqual('', stderr)
+
+    def test_sighup(self):
+        """Ensure that SIGHUP gets sent upon non-interactive ctrl-c"""
+        log_path = "/data/local/tmp/adb_signal_test.log"
+
+        # Clear the output file.
+        self.device.shell_nocheck(["echo", ">", log_path])
+
+        script = """
+            trap "echo SIGINT > {path}; exit 0" SIGINT
+            trap "echo SIGHUP > {path}; exit 0" SIGHUP
+            echo Waiting
+            read
+        """.format(path=log_path)
+
+        script = ";".join([x.strip() for x in script.strip().splitlines()])
+
+        process = self.device.shell_popen([script], kill_atexit=False,
+                                          stdin=subprocess.PIPE,
+                                          stdout=subprocess.PIPE)
+
+        self.assertEqual("Waiting\n", process.stdout.readline())
+        process.send_signal(signal.SIGINT)
+        process.wait()
+
+        # Waiting for the local adb to finish is insufficient, since it hangs
+        # up immediately.
+        time.sleep(1)
+
+        stdout, _ = self.device.shell(["cat", log_path])
+        self.assertEqual(stdout.strip(), "SIGHUP")
 
 
 class ArgumentEscapingTest(DeviceTest):
@@ -756,6 +810,36 @@ class FileOperationsTest(DeviceTest):
             if host_dir is not None:
                 shutil.rmtree(host_dir)
 
+    @unittest.skipIf(sys.platform == "win32", "symlinks require elevated privileges on windows")
+    def test_push_symlink(self):
+        """Push a symlink.
+
+        Bug: http://b/31491920
+        """
+        try:
+            host_dir = tempfile.mkdtemp()
+
+            # Make sure the temp directory isn't setuid, or else adb will
+            # complain.
+            os.chmod(host_dir, 0o700)
+
+            with open(os.path.join(host_dir, 'foo'), 'w') as f:
+                f.write('foo')
+
+            symlink_path = os.path.join(host_dir, 'symlink')
+            os.symlink('foo', symlink_path)
+
+            self.device.shell(['rm', '-rf', self.DEVICE_TEMP_DIR])
+            self.device.shell(['mkdir', self.DEVICE_TEMP_DIR])
+            self.device.push(symlink_path, self.DEVICE_TEMP_DIR)
+            rc, out, _ = self.device.shell_nocheck(
+                ['cat', posixpath.join(self.DEVICE_TEMP_DIR, 'symlink')])
+            self.assertEqual(0, rc)
+            self.assertEqual(out.strip(), 'foo')
+        finally:
+            if host_dir is not None:
+                shutil.rmtree(host_dir)
+
     def test_multiple_push(self):
         """Push multiple files to the device in one adb push command.
 
@@ -813,7 +897,8 @@ class FileOperationsTest(DeviceTest):
             except subprocess.CalledProcessError as e:
                 output = e.output
 
-            self.assertIn('Permission denied', output)
+            self.assertTrue('Permission denied' in output or
+                            'Read-only file system' in output)
 
     def _test_pull(self, remote_file, checksum):
         tmp_write = tempfile.NamedTemporaryFile(mode='wb', delete=False)
@@ -1052,8 +1137,18 @@ class FileOperationsTest(DeviceTest):
             if host_dir is not None:
                 shutil.rmtree(host_dir)
 
+    def verify_sync(self, device, temp_files, device_dir):
+        """Verifies that a list of temp files was synced to the device."""
+        # Confirm that every file on the device mirrors that on the host.
+        for temp_file in temp_files:
+            device_full_path = posixpath.join(
+                device_dir, temp_file.base_name)
+            dev_md5, _ = device.shell(
+                [get_md5_prog(self.device), device_full_path])[0].split()
+            self.assertEqual(temp_file.checksum, dev_md5)
+
     def test_sync(self):
-        """Sync a randomly generated directory of files to specified device."""
+        """Sync a host directory to the data partition."""
 
         try:
             base_dir = tempfile.mkdtemp()
@@ -1063,26 +1158,49 @@ class FileOperationsTest(DeviceTest):
             os.makedirs(full_dir_path)
 
             # Create 32 random files within the host mirror.
-            temp_files = make_random_host_files(in_dir=full_dir_path, num_files=32)
+            temp_files = make_random_host_files(
+                in_dir=full_dir_path, num_files=32)
 
-            # Clean up any trash on the device.
-            device = adb.get_device(product=base_dir)
+            # Clean up any stale files on the device.
+            device = adb.get_device()  # pylint: disable=no-member
             device.shell(['rm', '-rf', self.DEVICE_TEMP_DIR])
 
+            old_product_out = os.environ.get('ANDROID_PRODUCT_OUT')
+            os.environ['ANDROID_PRODUCT_OUT'] = base_dir
             device.sync('data')
+            if old_product_out is None:
+                del os.environ['ANDROID_PRODUCT_OUT']
+            else:
+                os.environ['ANDROID_PRODUCT_OUT'] = old_product_out
 
-            # Confirm that every file on the device mirrors that on the host.
-            for temp_file in temp_files:
-                device_full_path = posixpath.join(self.DEVICE_TEMP_DIR,
-                                                  temp_file.base_name)
-                dev_md5, _ = device.shell(
-                    [get_md5_prog(self.device), device_full_path])[0].split()
-                self.assertEqual(temp_file.checksum, dev_md5)
+            self.verify_sync(device, temp_files, self.DEVICE_TEMP_DIR)
 
-            self.device.shell(['rm', '-rf', self.DEVICE_TEMP_DIR])
+            #self.device.shell(['rm', '-rf', self.DEVICE_TEMP_DIR])
         finally:
             if base_dir is not None:
                 shutil.rmtree(base_dir)
+
+    def test_push_sync(self):
+        """Sync a host directory to a specific path."""
+
+        try:
+            temp_dir = tempfile.mkdtemp()
+            temp_files = make_random_host_files(in_dir=temp_dir, num_files=32)
+
+            device_dir = posixpath.join(self.DEVICE_TEMP_DIR, 'sync_src_dst')
+
+            # Clean up any stale files on the device.
+            device = adb.get_device()  # pylint: disable=no-member
+            device.shell(['rm', '-rf', device_dir])
+
+            device.push(temp_dir, device_dir, sync=True)
+
+            self.verify_sync(device, temp_files, device_dir)
+
+            self.device.shell(['rm', '-rf', self.DEVICE_TEMP_DIR])
+        finally:
+            if temp_dir is not None:
+                shutil.rmtree(temp_dir)
 
     def test_unicode_paths(self):
         """Ensure that we can support non-ASCII paths, even on Windows."""
@@ -1108,6 +1226,97 @@ class FileOperationsTest(DeviceTest):
         self.assertTrue(os.path.exists(tf.name))
         os.remove(tf.name)
         self.device.shell(['rm', '-f', '/data/local/tmp/adb-test-*'])
+
+
+class DeviceOfflineTest(DeviceTest):
+    def _get_device_state(self, serialno):
+        output = subprocess.check_output(self.device.adb_cmd + ['devices'])
+        for line in output.split('\n'):
+            m = re.match('(\S+)\s+(\S+)', line)
+            if m and m.group(1) == serialno:
+                return m.group(2)
+        return None
+
+    def test_killed_when_pushing_a_large_file(self):
+        """
+           While running adb push with a large file, kill adb server.
+           Occasionally the device becomes offline. Because the device is still
+           reading data without realizing that the adb server has been restarted.
+           Test if we can bring the device online automatically now.
+           http://b/32952319
+        """
+        serialno = subprocess.check_output(self.device.adb_cmd + ['get-serialno']).strip()
+        # 1. Push a large file
+        file_path = 'tmp_large_file'
+        try:
+            fh = open(file_path, 'w')
+            fh.write('\0' * (100 * 1024 * 1024))
+            fh.close()
+            subproc = subprocess.Popen(self.device.adb_cmd + ['push', file_path, '/data/local/tmp'])
+            time.sleep(0.1)
+            # 2. Kill the adb server
+            subprocess.check_call(self.device.adb_cmd + ['kill-server'])
+            subproc.terminate()
+        finally:
+            try:
+                os.unlink(file_path)
+            except:
+                pass
+        # 3. See if the device still exist.
+        # Sleep to wait for the adb server exit.
+        time.sleep(0.5)
+        # 4. The device should be online
+        self.assertEqual(self._get_device_state(serialno), 'device')
+
+    def test_killed_when_pulling_a_large_file(self):
+        """
+           While running adb pull with a large file, kill adb server.
+           Occasionally the device can't be connected. Because the device is trying to
+           send a message larger than what is expected by the adb server.
+           Test if we can bring the device online automatically now.
+        """
+        serialno = subprocess.check_output(self.device.adb_cmd + ['get-serialno']).strip()
+        file_path = 'tmp_large_file'
+        try:
+            # 1. Create a large file on device.
+            self.device.shell(['dd', 'if=/dev/zero', 'of=/data/local/tmp/tmp_large_file',
+                               'bs=1000000', 'count=100'])
+            # 2. Pull the large file on host.
+            subproc = subprocess.Popen(self.device.adb_cmd +
+                                       ['pull','/data/local/tmp/tmp_large_file', file_path])
+            time.sleep(0.1)
+            # 3. Kill the adb server
+            subprocess.check_call(self.device.adb_cmd + ['kill-server'])
+            subproc.terminate()
+        finally:
+            try:
+                os.unlink(file_path)
+            except:
+                pass
+        # 4. See if the device still exist.
+        # Sleep to wait for the adb server exit.
+        time.sleep(0.5)
+        self.assertEqual(self._get_device_state(serialno), 'device')
+
+
+    def test_packet_size_regression(self):
+        """Test for http://b/37783561
+
+        Receiving packets of a length divisible by 512 but not 1024 resulted in
+        the adb client waiting indefinitely for more input.
+        """
+        # The values that trigger things are 507 (512 - 5 bytes from shell protocol) + 1024*n
+        # Probe some surrounding values as well, for the hell of it.
+        for length in [506, 507, 508, 1018, 1019, 1020, 1530, 1531, 1532]:
+            cmd = ['dd', 'if=/dev/zero', 'bs={}'.format(length), 'count=1', '2>/dev/null;'
+                   'echo', 'foo']
+            rc, stdout, _ = self.device.shell_nocheck(cmd)
+
+            self.assertEqual(0, rc)
+
+            # Output should be '\0' * length, followed by "foo\n"
+            self.assertEqual(length, len(stdout) - 4)
+            self.assertEqual(stdout, "\0" * length + "foo\n")
 
 
 def main():

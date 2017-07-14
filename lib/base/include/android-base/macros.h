@@ -41,18 +41,9 @@
 // Note, that most uses of DISALLOW_ASSIGN and DISALLOW_COPY are broken
 // semantically, one should either use disallow both or neither. Try to
 // avoid these in new code.
-//
-// When building with C++11 toolchains, just use the language support
-// for explicitly deleted methods.
-#if __cplusplus >= 201103L
 #define DISALLOW_COPY_AND_ASSIGN(TypeName) \
   TypeName(const TypeName&) = delete;      \
   void operator=(const TypeName&) = delete
-#else
-#define DISALLOW_COPY_AND_ASSIGN(TypeName) \
-  TypeName(const TypeName&);               \
-  void operator=(const TypeName&)
-#endif
 
 // A macro to disallow all the implicit constructors, namely the
 // default constructor, copy constructor and operator= functions.
@@ -61,7 +52,7 @@
 // that wants to prevent anyone from instantiating it. This is
 // especially useful for classes containing only static methods.
 #define DISALLOW_IMPLICIT_CONSTRUCTORS(TypeName) \
-  TypeName();                                    \
+  TypeName() = delete;                           \
   DISALLOW_COPY_AND_ASSIGN(TypeName)
 
 // The arraysize(arr) macro returns the # of elements in an array arr.
@@ -165,10 +156,10 @@ void UNUSED(const T&...) {
 //  only if there are no statements on the execution path between it and the
 //  next switch label.
 //
-//  When compiled with clang in C++11 mode, the FALLTHROUGH_INTENDED macro is
-//  expanded to [[clang::fallthrough]] attribute, which is analysed when
-//  performing switch labels fall-through diagnostic ('-Wimplicit-fallthrough').
-//  See clang documentation on language extensions for details:
+//  When compiled with clang, the FALLTHROUGH_INTENDED macro is expanded to
+//  [[clang::fallthrough]] attribute, which is analysed when performing switch
+//  labels fall-through diagnostic ('-Wimplicit-fallthrough'). See clang
+//  documentation on language extensions for details:
 //  http://clang.llvm.org/docs/LanguageExtensions.html#clang__fallthrough
 //
 //  When used with unsupported compilers, the FALLTHROUGH_INTENDED macro has no
@@ -176,7 +167,7 @@ void UNUSED(const T&...) {
 //
 //  In either case this macro has no effect on runtime behavior and performance
 //  of code.
-#if defined(__clang__) && __cplusplus >= 201103L && defined(__has_warning)
+#if defined(__clang__) && defined(__has_warning)
 #if __has_feature(cxx_attributes) && __has_warning("-Wimplicit-fallthrough")
 #define FALLTHROUGH_INTENDED [[clang::fallthrough]]  // NOLINT
 #endif

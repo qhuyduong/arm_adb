@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#define LOG_TAG "dlmalloc-stubs"
+
 #include "log/log.h"
 
 #define UNUSED __attribute__((__unused__))

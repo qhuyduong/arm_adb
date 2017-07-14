@@ -31,6 +31,8 @@
 #include <unistd.h>
 #endif
 
+#include <thread>
+
 #include <android-base/file.h>
 #include <android-base/parsenetaddress.h>
 #include <android-base/stringprintf.h>
@@ -38,8 +40,10 @@
 #include <cutils/sockets.h>
 
 #if !ADB_HOST
-#include "cutils/android_reboot.h"
-#include "cutils/properties.h"
+#include <android-base/properties.h>
+#include <bootloader_message/bootloader_message.h>
+#include <cutils/android_reboot.h>
+#include <log/log_properties.h>
 #endif
 
 #include "adb.h"
@@ -49,6 +53,7 @@
 #include "remount_service.h"
 #include "services.h"
 #include "shell_service.h"
+#include "socket_spec.h"
 #include "sysdeps.h"
 #include "transport.h"
 
@@ -72,15 +77,13 @@ void restart_root_service(int fd, void *cookie) {
         WriteFdExactly(fd, "adbd is already running as root\n");
         adb_close(fd);
     } else {
-        char value[PROPERTY_VALUE_MAX];
-        property_get("ro.debuggable", value, "");
-        if (strcmp(value, "1") != 0) {
+        if (!__android_log_is_debuggable()) {
             WriteFdExactly(fd, "adbd cannot run as root in production builds\n");
             adb_close(fd);
             return;
         }
 
-        property_set("service.adb.root", "1");
+        android::base::SetProperty("service.adb.root", "1");
         WriteFdExactly(fd, "restarting adbd as root\n");
         adb_close(fd);
     }
@@ -91,7 +94,7 @@ void restart_unroot_service(int fd, void *cookie) {
         WriteFdExactly(fd, "adbd not running as root\n");
         adb_close(fd);
     } else {
-        property_set("service.adb.root", "0");
+        android::base::SetProperty("service.adb.root", "0");
         WriteFdExactly(fd, "restarting adbd as non root\n");
         adb_close(fd);
     }
@@ -105,15 +108,13 @@ void restart_tcp_service(int fd, void *cookie) {
         return;
     }
 
-    char value[PROPERTY_VALUE_MAX];
-    snprintf(value, sizeof(value), "%d", port);
-    property_set("service.adb.tcp.port", value);
+    android::base::SetProperty("service.adb.tcp.port", android::base::StringPrintf("%d", port));
     WriteFdFmt(fd, "restarting in TCP mode port: %d\n", port);
     adb_close(fd);
 }
 
 void restart_usb_service(int fd, void *cookie) {
-    property_set("service.adb.tcp.port", "0");
+    android::base::SetProperty("service.adb.tcp.port", "0");
     WriteFdExactly(fd, "restarting in USB mode\n");
     adb_close(fd);
 }
@@ -135,17 +136,12 @@ static bool reboot_service_impl(int fd, const char* arg) {
             return false;
         }
 
-        const char* const recovery_dir = "/cache/recovery";
-        const char* const command_file = "/cache/recovery/command";
-        // Ensure /cache/recovery exists.
-        if (adb_mkdir(recovery_dir, 0770) == -1 && errno != EEXIST) {
-            D("Failed to create directory '%s': %s", recovery_dir, strerror(errno));
-            return false;
-        }
-
-        bool write_status = android::base::WriteStringToFile(
-                auto_reboot ? "--sideload_auto_reboot" : "--sideload", command_file);
-        if (!write_status) {
+        const std::vector<std::string> options = {
+            auto_reboot ? "--sideload_auto_reboot" : "--sideload"
+        };
+        std::string err;
+        if (!write_bootloader_message(options, &err)) {
+            D("Failed to set bootloader message: %s", err.c_str());
             return false;
         }
 
@@ -154,16 +150,9 @@ static bool reboot_service_impl(int fd, const char* arg) {
 
     sync();
 
-    char property_val[PROPERTY_VALUE_MAX];
-    int ret = snprintf(property_val, sizeof(property_val), "reboot,%s", reboot_arg);
-    if (ret >= static_cast<int>(sizeof(property_val))) {
-        WriteFdFmt(fd, "reboot string too long: %d\n", ret);
-        return false;
-    }
-
-    ret = property_set(ANDROID_RB_PROPERTY, property_val);
-    if (ret < 0) {
-        WriteFdFmt(fd, "reboot failed: %d\n", ret);
+    std::string reboot_string = android::base::StringPrintf("reboot,%s", reboot_arg);
+    if (!android::base::SetProperty(ANDROID_RB_PROPERTY, reboot_string)) {
+        WriteFdFmt(fd, "reboot (%s) failed\n", reboot_string.c_str());
         return false;
     }
 
@@ -255,6 +244,15 @@ static int create_service_thread(void (*func)(int, void *), void *cookie)
     }
     D("socketpair: (%d,%d)", s[0], s[1]);
 
+#if !ADB_HOST
+    if (func == &file_sync_service) {
+        // Set file sync service socket to maximum size
+        int max_buf = LINUX_MAX_SOCKET_SIZE;
+        adb_setsockopt(s[0], SOL_SOCKET, SO_SNDBUF, &max_buf, sizeof(max_buf));
+        adb_setsockopt(s[1], SOL_SOCKET, SO_SNDBUF, &max_buf, sizeof(max_buf));
+    }
+#endif // !ADB_HOST
+
     stinfo* sti = reinterpret_cast<stinfo*>(malloc(sizeof(stinfo)));
     if (sti == nullptr) {
         fatal("cannot allocate stinfo");
@@ -263,13 +261,7 @@ static int create_service_thread(void (*func)(int, void *), void *cookie)
     sti->cookie = cookie;
     sti->fd = s[1];
 
-    if (!adb_thread_create(service_bootstrap_func, sti)) {
-        free(sti);
-        adb_close(s[0]);
-        adb_close(s[1]);
-        printf("cannot create service thread\n");
-        return -1;
-    }
+    std::thread(service_bootstrap_func, sti).detach();
 
     D("service thread started, %d:%d",s[0], s[1]);
     return s[0];
@@ -278,36 +270,12 @@ static int create_service_thread(void (*func)(int, void *), void *cookie)
 int service_to_fd(const char* name, const atransport* transport) {
     int ret = -1;
 
-    if(!strncmp(name, "tcp:", 4)) {
-        int port = atoi(name + 4);
-        name = strchr(name + 4, ':');
-        if(name == 0) {
-            std::string error;
-            ret = network_loopback_client(port, SOCK_STREAM, &error);
-            if (ret >= 0)
-                disable_tcp_nagle(ret);
-        } else {
-#if ADB_HOST
-            std::string error;
-            ret = network_connect(name + 1, port, SOCK_STREAM, 0, &error);
-#else
-            return -1;
-#endif
+    if (is_socket_spec(name)) {
+        std::string error;
+        ret = socket_spec_connect(name, &error);
+        if (ret < 0) {
+            LOG(ERROR) << "failed to connect to socket '" << name << "': " << error;
         }
-#if !defined(_WIN32)   /* winsock doesn't implement unix domain sockets */
-    } else if(!strncmp(name, "local:", 6)) {
-        ret = socket_local_client(name + 6,
-                ANDROID_SOCKET_NAMESPACE_RESERVED, SOCK_STREAM);
-    } else if(!strncmp(name, "localreserved:", 14)) {
-        ret = socket_local_client(name + 14,
-                ANDROID_SOCKET_NAMESPACE_RESERVED, SOCK_STREAM);
-    } else if(!strncmp(name, "localabstract:", 14)) {
-        ret = socket_local_client(name + 14,
-                ANDROID_SOCKET_NAMESPACE_ABSTRACT, SOCK_STREAM);
-    } else if(!strncmp(name, "localfilesystem:", 16)) {
-        ret = socket_local_client(name + 16,
-                ANDROID_SOCKET_NAMESPACE_FILESYSTEM, SOCK_STREAM);
-#endif
 #if !ADB_HOST
     } else if(!strncmp("dev:", name, 4)) {
         ret = unix_open(name + 4, O_RDWR | O_CLOEXEC);
@@ -379,7 +347,7 @@ static void wait_for_state(int fd, void* data) {
         std::string error = "unknown error";
         const char* serial = sinfo->serial.length() ? sinfo->serial.c_str() : NULL;
         atransport* t = acquire_one_transport(sinfo->transport_type, serial, &is_ambiguous, &error);
-        if (t != nullptr && (sinfo->state == kCsAny || sinfo->state == t->connection_state)) {
+        if (t != nullptr && (sinfo->state == kCsAny || sinfo->state == t->GetConnectionState())) {
             SendOkay(fd);
             break;
         } else if (!is_ambiguous) {
@@ -403,45 +371,6 @@ static void wait_for_state(int fd, void* data) {
 
     adb_close(fd);
     D("wait_for_state is done");
-}
-
-static void connect_device(const std::string& address, std::string* response) {
-    if (address.empty()) {
-        *response = "empty address";
-        return;
-    }
-
-    std::string serial;
-    std::string host;
-    int port = DEFAULT_ADB_LOCAL_TRANSPORT_PORT;
-    if (!android::base::ParseNetAddress(address, &host, &port, &serial, response)) {
-        return;
-    }
-
-    std::string error;
-    int fd = network_connect(host.c_str(), port, SOCK_STREAM, 10, &error);
-    if (fd == -1) {
-        *response = android::base::StringPrintf("unable to connect to %s: %s",
-                                                serial.c_str(), error.c_str());
-        return;
-    }
-
-    D("client: connected %s remote on fd %d", serial.c_str(), fd);
-    close_on_exec(fd);
-    disable_tcp_nagle(fd);
-
-    // Send a TCP keepalive ping to the device every second so we can detect disconnects.
-    if (!set_tcp_keepalive(fd, 1)) {
-        D("warning: failed to configure TCP keepalives (%s)", strerror(errno));
-    }
-
-    int ret = register_socket_transport(fd, serial.c_str(), port, 0);
-    if (ret < 0) {
-        adb_close(fd);
-        *response = android::base::StringPrintf("already connected to %s", serial.c_str());
-    } else {
-        *response = android::base::StringPrintf("connected to %s", serial.c_str());
-    }
 }
 
 void connect_emulator(const std::string& port_spec, std::string* response) {

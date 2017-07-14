@@ -27,7 +27,7 @@
 #include "adb.h"
 
 #if !ADB_HOST
-#include <cutils/properties.h>
+#include <android-base/properties.h>
 #endif
 
 #if !ADB_HOST
@@ -88,19 +88,11 @@ std::string get_trace_setting_from_env() {
     return std::string(setting);
 }
 
-#if !ADB_HOST
-std::string get_trace_setting_from_prop() {
-    char buf[PROPERTY_VALUE_MAX];
-    property_get("persist.adb.trace_mask", buf, "");
-    return std::string(buf);
-}
-#endif
-
 std::string get_trace_setting() {
 #if ADB_HOST
     return get_trace_setting_from_env();
 #else
-    return get_trace_setting_from_prop();
+    return android::base::GetProperty("persist.adb.trace_mask", "");
 #endif
 }
 
@@ -117,8 +109,8 @@ static void setup_trace_mask() {
     }
 
     std::unordered_map<std::string, int> trace_flags = {
-        {"1", 0},
-        {"all", 0},
+        {"1", -1},
+        {"all", -1},
         {"adb", ADB},
         {"sockets", SOCKETS},
         {"packets", PACKETS},
@@ -141,8 +133,8 @@ static void setup_trace_mask() {
             continue;
         }
 
-        if (flag->second == 0) {
-            // 0 is used for the special values "1" and "all" that enable all
+        if (flag->second == -1) {
+            // -1 is used for the special values "1" and "all" that enable all
             // tracing.
             adb_trace_mask = ~0;
             return;
@@ -163,7 +155,24 @@ void adb_trace_init(char** argv) {
     }
 #endif
 
+#if ADB_HOST && !defined(_WIN32)
+    // adb historically ignored $ANDROID_LOG_TAGS but passed it through to logcat.
+    // If set, move it out of the way so that libbase logging doesn't try to parse it.
+    std::string log_tags;
+    char* ANDROID_LOG_TAGS = getenv("ANDROID_LOG_TAGS");
+    if (ANDROID_LOG_TAGS) {
+        log_tags = ANDROID_LOG_TAGS;
+        unsetenv("ANDROID_LOG_TAGS");
+    }
+#endif
+
     android::base::InitLogging(argv, &AdbLogger);
+
+#if ADB_HOST && !defined(_WIN32)
+    // Put $ANDROID_LOG_TAGS back so we can pass it to logcat.
+    if (!log_tags.empty()) setenv("ANDROID_LOG_TAGS", log_tags.c_str(), 1);
+#endif
+
     setup_trace_mask();
 
     VLOG(ADB) << adb_version();

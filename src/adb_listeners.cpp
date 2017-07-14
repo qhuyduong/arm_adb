@@ -19,15 +19,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <algorithm>
+#include <list>
+
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
+#include <android-base/thread_annotations.h>
 #include <cutils/sockets.h>
 
+#include "socket_spec.h"
 #include "sysdeps.h"
 #include "transport.h"
-
-// Not static because it is used in commandline.c.
-int gListenAll = 0;
 
 // A listener is an entity which binds to a local port and, upon receiving a connection on that
 // port, creates an asocket to connect the new local connection to a specific remote service.
@@ -66,15 +68,13 @@ alistener::~alistener() {
 
 // listener_list retains ownership of all created alistener objects. Removing an alistener from
 // this list will cause it to be deleted.
+static auto& listener_list_mutex = *new std::mutex();
 typedef std::list<std::unique_ptr<alistener>> ListenerList;
-static ListenerList& listener_list = *new ListenerList();
+static ListenerList& listener_list GUARDED_BY(listener_list_mutex) = *new ListenerList();
 
 static void ss_listener_event_func(int _fd, unsigned ev, void *_l) {
     if (ev & FDE_READ) {
-        sockaddr_storage ss;
-        sockaddr* addrp = reinterpret_cast<sockaddr*>(&ss);
-        socklen_t alen = sizeof(ss);
-        int fd = adb_socket_accept(_fd, addrp, &alen);
+        int fd = adb_socket_accept(_fd, nullptr, nullptr);
         if (fd < 0) return;
 
         int rcv_buf_size = CHUNK_SIZE;
@@ -96,13 +96,7 @@ static void listener_event_func(int _fd, unsigned ev, void* _l)
     asocket *s;
 
     if (ev & FDE_READ) {
-        sockaddr_storage ss;
-        sockaddr* addrp = reinterpret_cast<sockaddr*>(&ss);
-        socklen_t alen;
-        int fd;
-
-        alen = sizeof(ss);
-        fd = adb_socket_accept(_fd, addrp, &alen);
+        int fd = adb_socket_accept(_fd, nullptr, nullptr);
         if (fd < 0) {
             return;
         }
@@ -119,7 +113,8 @@ static void listener_event_func(int _fd, unsigned ev, void* _l)
 }
 
 // Called as a transport disconnect function. |arg| is the raw alistener*.
-static void listener_disconnect(void* arg, atransport*) {
+static void listener_disconnect(void* arg, atransport*) EXCLUDES(listener_list_mutex) {
+    std::lock_guard<std::mutex> lock(listener_list_mutex);
     for (auto iter = listener_list.begin(); iter != listener_list.end(); ++iter) {
         if (iter->get() == arg) {
             (*iter)->transport = nullptr;
@@ -129,50 +124,9 @@ static void listener_disconnect(void* arg, atransport*) {
     }
 }
 
-int local_name_to_fd(alistener* listener, int* resolved_tcp_port, std::string* error) {
-    if (android::base::StartsWith(listener->local_name, "tcp:")) {
-        int requested_port = atoi(&listener->local_name[4]);
-        int sock = -1;
-        if (gListenAll > 0) {
-            sock = network_inaddr_any_server(requested_port, SOCK_STREAM, error);
-        } else {
-            sock = network_loopback_server(requested_port, SOCK_STREAM, error);
-        }
-
-        // If the caller requested port 0, update the listener name with the resolved port.
-        if (sock >= 0 && requested_port == 0) {
-            int local_port = adb_socket_get_local_port(sock);
-            if (local_port > 0) {
-                listener->local_name = android::base::StringPrintf("tcp:%d", local_port);
-                if (resolved_tcp_port != nullptr) {
-                    *resolved_tcp_port = local_port;
-                }
-            }
-        }
-
-        return sock;
-    }
-#if !defined(_WIN32)  // No Unix-domain sockets on Windows.
-    // It's nonsensical to support the "reserved" space on the adb host side.
-    if (android::base::StartsWith(listener->local_name, "local:")) {
-        return network_local_server(&listener->local_name[6], ANDROID_SOCKET_NAMESPACE_ABSTRACT,
-                                    SOCK_STREAM, error);
-    } else if (android::base::StartsWith(listener->local_name, "localabstract:")) {
-        return network_local_server(&listener->local_name[14], ANDROID_SOCKET_NAMESPACE_ABSTRACT,
-                                    SOCK_STREAM, error);
-    } else if (android::base::StartsWith(listener->local_name, "localfilesystem:")) {
-        return network_local_server(&listener->local_name[16], ANDROID_SOCKET_NAMESPACE_FILESYSTEM,
-                                    SOCK_STREAM, error);
-    }
-
-#endif
-    *error = android::base::StringPrintf("unknown local portname '%s'",
-                                         listener->local_name.c_str());
-    return -1;
-}
-
 // Write the list of current listeners (network redirections) into a string.
-std::string format_listeners() {
+std::string format_listeners() EXCLUDES(listener_list_mutex) {
+    std::lock_guard<std::mutex> lock(listener_list_mutex);
     std::string result;
     for (auto& l : listener_list) {
         // Ignore special listeners like those for *smartsocket*
@@ -188,7 +142,9 @@ std::string format_listeners() {
     return result;
 }
 
-InstallStatus remove_listener(const char* local_name, atransport* transport) {
+InstallStatus remove_listener(const char* local_name, atransport* transport)
+    EXCLUDES(listener_list_mutex) {
+    std::lock_guard<std::mutex> lock(listener_list_mutex);
     for (auto iter = listener_list.begin(); iter != listener_list.end(); ++iter) {
         if (local_name == (*iter)->local_name) {
             listener_list.erase(iter);
@@ -198,7 +154,8 @@ InstallStatus remove_listener(const char* local_name, atransport* transport) {
     return INSTALL_STATUS_LISTENER_NOT_FOUND;
 }
 
-void remove_all_listeners() {
+void remove_all_listeners() EXCLUDES(listener_list_mutex) {
+    std::lock_guard<std::mutex> lock(listener_list_mutex);
     auto iter = listener_list.begin();
     while (iter != listener_list.end()) {
         // Never remove smart sockets.
@@ -210,9 +167,18 @@ void remove_all_listeners() {
     }
 }
 
+void close_smartsockets() EXCLUDES(listener_list_mutex) {
+    std::lock_guard<std::mutex> lock(listener_list_mutex);
+    auto pred = [](const std::unique_ptr<alistener>& listener) {
+        return listener->local_name == "*smartsocket*";
+    };
+    listener_list.erase(std::remove_if(listener_list.begin(), listener_list.end(), pred));
+}
+
 InstallStatus install_listener(const std::string& local_name, const char* connect_to,
                                atransport* transport, int no_rebind, int* resolved_tcp_port,
-                               std::string* error) {
+                               std::string* error) EXCLUDES(listener_list_mutex) {
+    std::lock_guard<std::mutex> lock(listener_list_mutex);
     for (auto& l : listener_list) {
         if (local_name == l->local_name) {
             // Can't repurpose a smartsocket.
@@ -239,9 +205,18 @@ InstallStatus install_listener(const std::string& local_name, const char* connec
 
     std::unique_ptr<alistener> listener(new alistener(local_name, connect_to));
 
-    listener->fd = local_name_to_fd(listener.get(), resolved_tcp_port, error);
+    int resolved = 0;
+    listener->fd = socket_spec_listen(listener->local_name, error, &resolved);
     if (listener->fd < 0) {
         return INSTALL_STATUS_CANNOT_BIND;
+    }
+
+    // If the caller requested port 0, update the listener name with the resolved port.
+    if (resolved != 0) {
+        listener->local_name = android::base::StringPrintf("tcp:%d", resolved);
+        if (resolved_tcp_port) {
+            *resolved_tcp_port = resolved;
+        }
     }
 
     close_on_exec(listener->fd);
@@ -256,7 +231,7 @@ InstallStatus install_listener(const std::string& local_name, const char* connec
 
     if (transport) {
         listener->disconnect.opaque = listener.get();
-        listener->disconnect.func   = listener_disconnect;
+        listener->disconnect.func = listener_disconnect;
         transport->AddDisconnect(&listener->disconnect);
     }
 

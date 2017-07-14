@@ -34,6 +34,10 @@
 #include <android-base/unique_fd.h>
 #include <android-base/utf8.h>
 
+#include "sysdeps/errno.h"
+#include "sysdeps/network.h"
+#include "sysdeps/stat.h"
+
 /*
  * TEMP_FAILURE_RETRY is defined by some, but not all, versions of
  * <unistd.h>. (Alas, it is not as standard as we'd hoped!) So, if it's
@@ -95,98 +99,11 @@ static __inline__ bool adb_is_separator(char c) {
     return c == '\\' || c == '/';
 }
 
-typedef CRITICAL_SECTION          adb_mutex_t;
-
-#define  ADB_MUTEX_DEFINE(x)     adb_mutex_t   x
-
-/* declare all mutexes */
-/* For win32, adb_sysdeps_init() will do the mutex runtime initialization. */
-#define  ADB_MUTEX(x)   extern adb_mutex_t  x;
-#include "mutex_list.h"
-
-extern void  adb_sysdeps_init(void);
-
-static __inline__ void adb_mutex_lock( adb_mutex_t*  lock )
-{
-    EnterCriticalSection( lock );
-}
-
-static __inline__ void  adb_mutex_unlock( adb_mutex_t*  lock )
-{
-    LeaveCriticalSection( lock );
-}
-
-typedef void (*adb_thread_func_t)(void* arg);
-typedef HANDLE adb_thread_t;
-
-struct adb_winthread_args {
-    adb_thread_func_t func;
-    void* arg;
-};
-
-static unsigned __stdcall adb_winthread_wrapper(void* heap_args) {
-    // Move the arguments from the heap onto the thread's stack.
-    adb_winthread_args thread_args = *static_cast<adb_winthread_args*>(heap_args);
-    delete static_cast<adb_winthread_args*>(heap_args);
-    thread_args.func(thread_args.arg);
-    return 0;
-}
-
-static __inline__ bool adb_thread_create(adb_thread_func_t func, void* arg,
-                                         adb_thread_t* thread = nullptr) {
-    adb_winthread_args* args = new adb_winthread_args{.func = func, .arg = arg};
-    uintptr_t handle = _beginthreadex(nullptr, 0, adb_winthread_wrapper, args, 0, nullptr);
-    if (handle != static_cast<uintptr_t>(0)) {
-        if (thread) {
-            *thread = reinterpret_cast<HANDLE>(handle);
-        } else {
-            CloseHandle(thread);
-        }
-        return true;
-    }
-    return false;
-}
-
-static __inline__ bool adb_thread_join(adb_thread_t thread) {
-    switch (WaitForSingleObject(thread, INFINITE)) {
-        case WAIT_OBJECT_0:
-            CloseHandle(thread);
-            return true;
-
-        case WAIT_FAILED:
-            fprintf(stderr, "adb_thread_join failed: %s\n",
-                    android::base::SystemErrorCodeToString(GetLastError()).c_str());
-            break;
-
-        default:
-            abort();
-    }
-
-    return false;
-}
-
-static __inline__ bool adb_thread_detach(adb_thread_t thread) {
-    CloseHandle(thread);
-    return true;
-}
-
-static __inline__ void __attribute__((noreturn)) adb_thread_exit() {
-    _endthreadex(0);
-}
-
 static __inline__ int adb_thread_setname(const std::string& name) {
     // TODO: See https://msdn.microsoft.com/en-us/library/xcb2z8hs.aspx for how to set
     // the thread name in Windows. Unfortunately, it only works during debugging, but
     // our build process doesn't generate PDB files needed for debugging.
     return 0;
-}
-
-static __inline__ adb_thread_t adb_thread_self() {
-    return GetCurrentThread();
-}
-
-static __inline__ bool adb_thread_equal(adb_thread_t lhs, adb_thread_t rhs) {
-    return GetThreadId(lhs) == GetThreadId(rhs);
 }
 
 static __inline__  unsigned long adb_thread_id()
@@ -198,10 +115,6 @@ static __inline__ void  close_on_exec(int  fd)
 {
     /* nothing really */
 }
-
-#define  lstat    stat   /* no symlinks on Win32 */
-
-#define  S_ISLNK(m)   0   /* no symlinks on Win32 */
 
 extern int  adb_unlink(const char*  path);
 #undef  unlink
@@ -219,6 +132,7 @@ extern int  adb_write(int  fd, const void*  buf, int  len);
 extern int  adb_lseek(int  fd, int  pos, int  where);
 extern int  adb_shutdown(int  fd);
 extern int  adb_close(int  fd);
+extern int  adb_register_socket(SOCKET s);
 
 // See the comments for the !defined(_WIN32) version of unix_close().
 static __inline__ int  unix_close(int fd)
@@ -269,14 +183,16 @@ extern int unix_open(const char* path, int options, ...);
 int unix_isatty(int fd);
 #define  isatty  ___xxx_isatty
 
-static __inline__ void  adb_sleep_ms( int  mseconds )
-{
-    Sleep( mseconds );
+int network_inaddr_any_server(int port, int type, std::string* error);
+
+inline int network_local_client(const char* name, int namespace_id, int type, std::string* error) {
+    abort();
 }
 
-int network_loopback_client(int port, int type, std::string* error);
-int network_loopback_server(int port, int type, std::string* error);
-int network_inaddr_any_server(int port, int type, std::string* error);
+inline int network_local_server(const char* name, int namespace_id, int type, std::string* error) {
+    abort();
+}
+
 int network_connect(const std::string& host, int port, int type, int timeout,
                     std::string* error);
 
@@ -306,27 +222,6 @@ extern int adb_poll(adb_pollfd* fds, size_t nfds, int timeout);
 static __inline__ int adb_is_absolute_host_path(const char* path) {
     return isalpha(path[0]) && path[1] == ':' && path[2] == '\\';
 }
-
-// We later define a macro mapping 'stat' to 'adb_stat'. This causes:
-//   struct stat s;
-//   stat(filename, &s);
-// To turn into the following:
-//   struct adb_stat s;
-//   adb_stat(filename, &s);
-// To get this to work, we need to make 'struct adb_stat' the same as
-// 'struct stat'. Note that this definition of 'struct adb_stat' uses the
-// *current* macro definition of stat, so it may actually be inheriting from
-// struct _stat32i64 (or some other remapping).
-struct adb_stat : public stat {};
-
-static_assert(sizeof(struct adb_stat) == sizeof(struct stat),
-    "structures should be the same");
-
-extern int adb_stat(const char* f, struct adb_stat* s);
-
-// stat is already a macro, undefine it so we can redefine it.
-#undef stat
-#define stat adb_stat
 
 // UTF-8 versions of POSIX APIs.
 extern DIR* adb_opendir(const char* dirname);
@@ -396,9 +291,6 @@ inline void seekdir(DIR*, long) {
 #define unsetenv unsetenv_utf8_not_yet_implemented
 
 #define getcwd adb_getcwd
-
-char* adb_strerror(int err);
-#define strerror adb_strerror
 
 // Helper class to convert UTF-16 argv from wmain() to UTF-8 args that can be
 // passed to main().
@@ -484,27 +376,6 @@ static __inline__ bool adb_is_separator(char c) {
     return c == '/';
 }
 
-typedef  pthread_mutex_t          adb_mutex_t;
-
-#define  ADB_MUTEX_INITIALIZER    PTHREAD_MUTEX_INITIALIZER
-#define  adb_mutex_init           pthread_mutex_init
-#define  adb_mutex_lock           pthread_mutex_lock
-#define  adb_mutex_unlock         pthread_mutex_unlock
-#define  adb_mutex_destroy        pthread_mutex_destroy
-
-#define  ADB_MUTEX_DEFINE(m)      adb_mutex_t   m = PTHREAD_MUTEX_INITIALIZER
-
-#define  adb_cond_t               pthread_cond_t
-#define  adb_cond_init            pthread_cond_init
-#define  adb_cond_wait            pthread_cond_wait
-#define  adb_cond_broadcast       pthread_cond_broadcast
-#define  adb_cond_signal          pthread_cond_signal
-#define  adb_cond_destroy         pthread_cond_destroy
-
-/* declare all mutexes */
-#define  ADB_MUTEX(x)   extern adb_mutex_t  x;
-#include "mutex_list.h"
-
 static __inline__ void  close_on_exec(int  fd)
 {
     fcntl( fd, F_SETFD, FD_CLOEXEC );
@@ -582,6 +453,12 @@ __inline__ int adb_close(int fd) {
 #undef   close
 #define  close   ____xxx_close
 
+// On Windows, ADB has an indirection layer for file descriptors. If we get a
+// Win32 SOCKET object from an external library, we have to map it in to that
+// indirection layer, which this does.
+__inline__ int  adb_register_socket(int s) {
+    return s;
+}
 
 static __inline__  int  adb_read(int  fd, void*  buf, size_t  len)
 {
@@ -643,22 +520,16 @@ inline int _fd_set_error_str(int fd, std::string* error) {
   return fd;
 }
 
-inline int network_loopback_client(int port, int type, std::string* error) {
-  return _fd_set_error_str(socket_loopback_client(port, type), error);
-}
-
-inline int network_loopback_server(int port, int type, std::string* error) {
-  return _fd_set_error_str(socket_loopback_server(port, type), error);
-}
-
 inline int network_inaddr_any_server(int port, int type, std::string* error) {
   return _fd_set_error_str(socket_inaddr_any_server(port, type), error);
 }
 
-inline int network_local_server(const char *name, int namespace_id, int type,
-                                std::string* error) {
-  return _fd_set_error_str(socket_local_server(name, namespace_id, type),
-                           error);
+inline int network_local_client(const char* name, int namespace_id, int type, std::string* error) {
+    return _fd_set_error_str(socket_local_client(name, namespace_id, type), error);
+}
+
+inline int network_local_server(const char* name, int namespace_id, int type, std::string* error) {
+    return _fd_set_error_str(socket_local_server(name, namespace_id, type), error);
 }
 
 inline int network_connect(const std::string& host, int port, int type,
@@ -706,55 +577,6 @@ inline int adb_socket_get_local_port(int fd) {
 #define  unix_read   adb_read
 #define  unix_write  adb_write
 #define  unix_close  adb_close
-
-// Win32 is limited to DWORDs for thread return values; limit the POSIX systems to this as well to
-// ensure compatibility.
-typedef void (*adb_thread_func_t)(void* arg);
-typedef pthread_t adb_thread_t;
-
-struct adb_pthread_args {
-    adb_thread_func_t func;
-    void* arg;
-};
-
-static void* adb_pthread_wrapper(void* heap_args) {
-    // Move the arguments from the heap onto the thread's stack.
-    adb_pthread_args thread_args = *reinterpret_cast<adb_pthread_args*>(heap_args);
-    delete static_cast<adb_pthread_args*>(heap_args);
-    thread_args.func(thread_args.arg);
-    return nullptr;
-}
-
-static __inline__ bool adb_thread_create(adb_thread_func_t start, void* arg,
-                                         adb_thread_t* thread = nullptr) {
-    pthread_t temp;
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, thread ? PTHREAD_CREATE_JOINABLE : PTHREAD_CREATE_DETACHED);
-    auto* pthread_args = new adb_pthread_args{.func = start, .arg = arg};
-    errno = pthread_create(&temp, &attr, adb_pthread_wrapper, pthread_args);
-    if (errno == 0) {
-        if (thread) {
-            *thread = temp;
-        }
-        return true;
-    }
-    return false;
-}
-
-static __inline__ bool adb_thread_join(adb_thread_t thread) {
-    errno = pthread_join(thread, nullptr);
-    return errno == 0;
-}
-
-static __inline__ bool adb_thread_detach(adb_thread_t thread) {
-    errno = pthread_detach(thread);
-    return errno == 0;
-}
-
-static __inline__ void __attribute__((noreturn)) adb_thread_exit() {
-    pthread_exit(nullptr);
-}
 
 static __inline__ int adb_thread_setname(const std::string& name) {
 #ifdef __APPLE__
@@ -811,11 +633,6 @@ static __inline__ int adb_poll(adb_pollfd* fds, size_t nfds, int timeout) {
 
 #define poll ___xxx_poll
 
-static __inline__ void  adb_sleep_ms( int  mseconds )
-{
-    usleep( mseconds*1000 );
-}
-
 static __inline__ int  adb_mkdir(const std::string& path, int mode)
 {
     return mkdir(path.c_str(), mode);
@@ -823,10 +640,6 @@ static __inline__ int  adb_mkdir(const std::string& path, int mode)
 
 #undef   mkdir
 #define  mkdir  ___xxx_mkdir
-
-static __inline__ void  adb_sysdeps_init(void)
-{
-}
 
 static __inline__ int adb_is_absolute_host_path(const char* path) {
     return path[0] == '/';
@@ -848,5 +661,10 @@ static inline void disable_tcp_nagle(int fd) {
 // |interval_sec| to 0 to disable keepalives. If keepalives are enabled, the connection will be
 // configured to drop after 10 missed keepalives. Returns true on success.
 bool set_tcp_keepalive(int fd, int interval_sec);
+
+#if defined(_WIN32)
+// Win32 defines ERROR, which we don't need, but which conflicts with google3 logging.
+#undef ERROR
+#endif
 
 #endif /* _ADB_SYSDEPS_H */

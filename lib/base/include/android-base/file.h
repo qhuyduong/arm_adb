@@ -28,20 +28,36 @@ namespace android {
 namespace base {
 
 bool ReadFdToString(int fd, std::string* content);
-bool ReadFileToString(const std::string& path, std::string* content);
+bool ReadFileToString(const std::string& path, std::string* content,
+                      bool follow_symlinks = false);
 
-bool WriteStringToFile(const std::string& content, const std::string& path);
+bool WriteStringToFile(const std::string& content, const std::string& path,
+                       bool follow_symlinks = false);
 bool WriteStringToFd(const std::string& content, int fd);
 
 #if !defined(_WIN32)
 bool WriteStringToFile(const std::string& content, const std::string& path,
-                       mode_t mode, uid_t owner, gid_t group);
+                       mode_t mode, uid_t owner, gid_t group,
+                       bool follow_symlinks = false);
 #endif
 
 bool ReadFully(int fd, void* data, size_t byte_count);
 bool WriteFully(int fd, const void* data, size_t byte_count);
 
 bool RemoveFileIfExists(const std::string& path, std::string* err = nullptr);
+
+#if !defined(_WIN32)
+bool Realpath(const std::string& path, std::string* result);
+bool Readlink(const std::string& path, std::string* result);
+#endif
+
+std::string GetExecutablePath();
+std::string GetExecutableDirectory();
+
+// Like the regular basename and dirname, but thread-safe on all
+// platforms and capable of correctly handling exotic Windows paths.
+std::string Basename(const std::string& path);
+std::string Dirname(const std::string& path);
 
 }  // namespace base
 }  // namespace android

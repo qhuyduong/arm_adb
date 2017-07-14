@@ -29,13 +29,14 @@
 
 #include <android-base/logging.h>
 #include <android-base/macros.h>
+#include <android-base/properties.h>
 #include <android-base/stringprintf.h>
 #include <libminijail.h>
+#include <log/log_properties.h>
 #include <scoped_minijail.h>
 
-#include "cutils/properties.h"
-#include "debuggerd/client.h"
-#include "private/android_filesystem_config.h"
+#include <private/android_filesystem_config.h>
+#include "debuggerd/handler.h"
 #include "selinux/android.h"
 
 #include "adb.h"
@@ -44,13 +45,13 @@
 #include "adb_utils.h"
 #include "transport.h"
 
+#include "mdns.h"
+
 static const char* root_seclabel = nullptr;
 
 static void drop_capabilities_bounding_set_if_needed(struct minijail *j) {
 #if defined(ALLOW_ADBD_ROOT)
-    char value[PROPERTY_VALUE_MAX];
-    property_get("ro.debuggable", value, "");
-    if (strcmp(value, "1") == 0) {
+    if (__android_log_is_debuggable()) {
         return;
     }
 #endif
@@ -59,8 +60,6 @@ static void drop_capabilities_bounding_set_if_needed(struct minijail *j) {
 
 static bool should_drop_privileges() {
 #if defined(ALLOW_ADBD_ROOT)
-    char value[PROPERTY_VALUE_MAX];
-
     // The properties that affect `adb root` and `adb unroot` are ro.secure and
     // ro.debuggable. In this context the names don't make the expected behavior
     // particularly obvious.
@@ -71,24 +70,19 @@ static bool should_drop_privileges() {
     //
     // ro.secure:
     //   Drop privileges by default. Set to 1 on userdebug and user builds.
-    property_get("ro.secure", value, "1");
-    bool ro_secure = (strcmp(value, "1") == 0);
-
-    property_get("ro.debuggable", value, "");
-    bool ro_debuggable = (strcmp(value, "1") == 0);
+    bool ro_secure = android::base::GetBoolProperty("ro.secure", true);
+    bool ro_debuggable = __android_log_is_debuggable();
 
     // Drop privileges if ro.secure is set...
     bool drop = ro_secure;
 
-    property_get("service.adb.root", value, "");
-    bool adb_root = (strcmp(value, "1") == 0);
-    bool adb_unroot = (strcmp(value, "0") == 0);
-
     // ... except "adb root" lets you keep privileges in a debuggable build.
+    std::string prop = android::base::GetProperty("service.adb.root", "");
+    bool adb_root = (prop == "1");
+    bool adb_unroot = (prop == "0");
     if (ro_debuggable && adb_root) {
         drop = false;
     }
-
     // ... and "adb unroot" lets you explicitly drop privileges.
     if (adb_unroot) {
         drop = true;
@@ -113,10 +107,10 @@ static void drop_privileges(int server_port) {
     // AID_SDCARD_RW to allow writing to the SD card
     // AID_NET_BW_STATS to read out qtaguid statistics
     // AID_READPROC for reading /proc entries across UID boundaries
-    gid_t groups[] = {AID_ADB,      AID_LOG,       AID_INPUT,
-                      AID_INET,     AID_NET_BT,    AID_NET_BT_ADMIN,
-                      AID_SDCARD_R, AID_SDCARD_RW, AID_NET_BW_STATS,
-                      AID_READPROC};
+    // AID_UHID for using 'hid' command to read/write to /dev/uhid
+    gid_t groups[] = {AID_ADB,          AID_LOG,          AID_INPUT,    AID_INET,
+                      AID_NET_BT,       AID_NET_BT_ADMIN, AID_SDCARD_R, AID_SDCARD_RW,
+                      AID_NET_BW_STATS, AID_READPROC,     AID_UHID};
     minijail_set_supplementary_gids(jail.get(), arraysize(groups), groups);
 
     // Don't listen on a port (default 5037) if running in secure mode.
@@ -148,6 +142,11 @@ static void drop_privileges(int server_port) {
     }
 }
 
+static void setup_port(int port) {
+    local_init(port);
+    setup_mdns(port);
+}
+
 int adbd_main(int server_port) {
     umask(0);
 
@@ -159,7 +158,7 @@ int adbd_main(int server_port) {
     // descriptor will always be open.
     adbd_cloexec_auth_socket();
 
-    if (ALLOW_ADBD_NO_AUTH && property_get_bool("ro.adb.secure", 0) == 0) {
+    if (ALLOW_ADBD_NO_AUTH && !android::base::GetBoolProperty("ro.adb.secure", false)) {
         auth_required = false;
     }
 
@@ -178,7 +177,7 @@ int adbd_main(int server_port) {
     drop_privileges(server_port);
 
     bool is_usb = false;
-    if (access(USB_ADB_PATH, F_OK) == 0 || access(USB_FFS_ADB_EP0, F_OK) == 0) {
+    if (access(USB_FFS_ADB_EP0, F_OK) == 0) {
         // Listen on USB.
         usb_init();
         is_usb = true;
@@ -187,20 +186,19 @@ int adbd_main(int server_port) {
     // If one of these properties is set, also listen on that port.
     // If one of the properties isn't set and we couldn't listen on usb, listen
     // on the default port.
-    char prop_port[PROPERTY_VALUE_MAX];
-    property_get("service.adb.tcp.port", prop_port, "");
-    if (prop_port[0] == '\0') {
-        property_get("persist.adb.tcp.port", prop_port, "");
+    std::string prop_port = android::base::GetProperty("service.adb.tcp.port", "");
+    if (prop_port.empty()) {
+        prop_port = android::base::GetProperty("persist.adb.tcp.port", "");
     }
 
     int port;
-    if (sscanf(prop_port, "%d", &port) == 1 && port > 0) {
+    if (sscanf(prop_port.c_str(), "%d", &port) == 1 && port > 0) {
         D("using port=%d", port);
         // Listen on TCP port specified by service.adb.tcp.port property.
-        local_init(port);
+        setup_port(port);
     } else if (!is_usb) {
         // Listen on default port.
-        local_init(DEFAULT_ADB_LOCAL_TRANSPORT_PORT);
+        setup_port(DEFAULT_ADB_LOCAL_TRANSPORT_PORT);
     }
 
     D("adbd_main(): pre init_jdwp()");
@@ -235,9 +233,8 @@ int main(int argc, char** argv) {
             adb_device_banner = optarg;
             break;
         case 'v':
-            printf("Android Debug Bridge Daemon version %d.%d.%d %s\n",
-                   ADB_VERSION_MAJOR, ADB_VERSION_MINOR, ADB_SERVER_VERSION,
-                   ADB_REVISION);
+            printf("Android Debug Bridge Daemon version %d.%d.%d (%s)\n", ADB_VERSION_MAJOR,
+                   ADB_VERSION_MINOR, ADB_SERVER_VERSION, ADB_VERSION);
             return 0;
         default:
             // getopt already prints "adbd: invalid option -- %c" for us.
@@ -247,6 +244,7 @@ int main(int argc, char** argv) {
 
     close_stdin();
 
+    debuggerd_init(nullptr);
     adb_trace_init(argv);
 
     D("Handling main()");

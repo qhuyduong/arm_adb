@@ -17,26 +17,25 @@
 #ifndef _ADB_UTILS_H_
 #define _ADB_UTILS_H_
 
+#include <condition_variable>
+#include <mutex>
 #include <string>
+#include <vector>
 
 #include <android-base/macros.h>
-#include <android-base/unique_fd.h>
+
+int syntax_error(const char*, ...);
 
 void close_stdin();
 
 bool getcwd(std::string* cwd);
 bool directory_exists(const std::string& path);
 
-// Like the regular basename and dirname, but thread-safe on all
-// platforms and capable of correctly handling exotic Windows paths.
-std::string adb_basename(const std::string& path);
-std::string adb_dirname(const std::string& path);
-
 // Return the user's home directory.
-// |check_env_first| - if true, on Windows check the ANDROID_SDK_HOME
-// environment variable before trying the WinAPI call (useful when looking for
-// the .android directory)
-std::string adb_get_homedir_path(bool check_env_first);
+std::string adb_get_homedir_path();
+
+// Return the adb user directory.
+std::string adb_get_android_dir_path();
 
 bool mkdirs(const std::string& path);
 
@@ -57,13 +56,39 @@ extern int adb_close(int fd);
 bool forward_targets_are_valid(const std::string& source, const std::string& dest,
                                std::string* error);
 
-// Helper to automatically close an FD when it goes out of scope.
-struct AdbCloser {
-    static void Close(int fd) {
-        adb_close(fd);
+// A thread-safe blocking queue.
+template <typename T>
+class BlockingQueue {
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::vector<T> queue;
+
+  public:
+    void Push(const T& t) {
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            queue.push_back(t);
+        }
+        cv.notify_one();
+    }
+
+    template <typename Fn>
+    void PopAll(Fn fn) {
+        std::vector<T> popped;
+
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            cv.wait(lock, [this]() { return !queue.empty(); });
+            popped = std::move(queue);
+            queue.clear();
+        }
+
+        for (const T& t : popped) {
+            fn(t);
+        }
     }
 };
 
-using unique_fd = android::base::unique_fd_impl<AdbCloser>;
+std::string GetLogFilePath();
 
 #endif

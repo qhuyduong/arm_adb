@@ -82,6 +82,7 @@
 #include "shell_service.h"
 
 #include <errno.h>
+#include <paths.h>
 #include <pty.h>
 #include <pwd.h>
 #include <sys/select.h>
@@ -89,35 +90,22 @@
 
 #include <memory>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
 #include <android-base/logging.h>
 #include <android-base/stringprintf.h>
-#include <paths.h>
-#include <log/log.h>
+#include <private/android_logger.h>
 
 #include "adb.h"
 #include "adb_io.h"
 #include "adb_trace.h"
+#include "adb_unique_fd.h"
 #include "adb_utils.h"
 #include "security_log_tags.h"
 
 namespace {
-
-void init_subproc_child()
-{
-    setsid();
-
-    // Set OOM score adjustment to prevent killing
-    int fd = adb_open("/proc/self/oom_score_adj", O_WRONLY | O_CLOEXEC);
-    if (fd >= 0) {
-        adb_write(fd, "0", 1);
-        adb_close(fd);
-    } else {
-       D("adb: unable to update oom_score_adj");
-    }
-}
 
 // Reads from |fd| until close or failure.
 std::string ReadAll(int fd) {
@@ -155,13 +143,18 @@ class Subprocess {
 
     const std::string& command() const { return command_; }
 
-    int local_socket_fd() const { return local_socket_sfd_; }
+    int ReleaseLocalSocket() { return local_socket_sfd_.release(); }
 
     pid_t pid() const { return pid_; }
 
     // Sets up FDs, forks a subprocess, starts the subprocess manager thread,
-    // and exec's the child. Returns false on failure.
+    // and exec's the child. Returns false and sets error on failure.
     bool ForkAndExec(std::string* _Nonnull error);
+
+    // Start the subprocess manager thread. Consumes the subprocess, regardless of success.
+    // Returns false and sets error on failure.
+    static bool StartThread(std::unique_ptr<Subprocess> subprocess,
+                            std::string* _Nonnull error);
 
   private:
     // Opens the file at |pts_name|.
@@ -310,7 +303,7 @@ bool Subprocess::ForkAndExec(std::string* error) {
 
     if (pid_ == 0) {
         // Subprocess child.
-        init_subproc_child();
+        setsid();
 
         if (type_ == SubprocessType::kPty) {
             child_stdinout_sfd.reset(OpenPtyChildFd(pts_name, &child_error_sfd));
@@ -327,6 +320,10 @@ bool Subprocess::ForkAndExec(std::string* error) {
         child_stderr_sfd.reset(-1);
         parent_error_sfd.reset(-1);
         close_on_exec(child_error_sfd);
+
+        // adbd sets SIGPIPE to SIG_IGN to get EPIPE instead, and Linux propagates that to child
+        // processes, so we need to manually reset back to SIG_DFL here (http://b/35209888).
+        signal(SIGPIPE, SIG_DFL);
 
         if (command_.empty()) {
             execle(_PATH_BSHELL, _PATH_BSHELL, "-", nullptr, cenv.data());
@@ -390,14 +387,14 @@ bool Subprocess::ForkAndExec(std::string* error) {
         }
     }
 
-    if (!adb_thread_create(ThreadHandler, this)) {
-        *error =
-            android::base::StringPrintf("failed to create subprocess thread: %s", strerror(errno));
-        kill(pid_, SIGKILL);
-        return false;
-    }
-
     D("subprocess parent: completed");
+    return true;
+}
+
+bool Subprocess::StartThread(std::unique_ptr<Subprocess> subprocess, std::string* error) {
+    Subprocess* raw = subprocess.release();
+    std::thread(ThreadHandler, raw).detach();
+
     return true;
 }
 
@@ -439,8 +436,9 @@ void Subprocess::ThreadHandler(void* userdata) {
     Subprocess* subprocess = reinterpret_cast<Subprocess*>(userdata);
 
     adb_thread_setname(android::base::StringPrintf(
-            "shell srvc %d", subprocess->local_socket_fd()));
+            "shell srvc %d", subprocess->pid()));
 
+    D("passing data streams for PID %d", subprocess->pid());
     subprocess->PassDataStreams();
 
     D("deleting Subprocess for PID %d", subprocess->pid());
@@ -481,10 +479,10 @@ void Subprocess::PassDataStreams() {
                 // We also need to close the pipes connected to the child process
                 // so that if it ignores SIGHUP and continues to write data it
                 // won't fill up the pipe and block.
-                stdinout_sfd_.clear();
-                stderr_sfd_.clear();
+                stdinout_sfd_.reset();
+                stderr_sfd_.reset();
             }
-            dead_sfd->clear();
+            dead_sfd->reset();
         }
     }
 }
@@ -733,7 +731,7 @@ int StartSubprocess(const char* name, const char* terminal_type,
       protocol == SubprocessProtocol::kNone ? "none" : "shell",
       terminal_type, name);
 
-    Subprocess* subprocess = new Subprocess(name, terminal_type, type, protocol);
+    auto subprocess = std::make_unique<Subprocess>(name, terminal_type, type, protocol);
     if (!subprocess) {
         LOG(ERROR) << "failed to allocate new subprocess";
         return ReportError(protocol, "failed to allocate new subprocess");
@@ -742,11 +740,17 @@ int StartSubprocess(const char* name, const char* terminal_type,
     std::string error;
     if (!subprocess->ForkAndExec(&error)) {
         LOG(ERROR) << "failed to start subprocess: " << error;
-        delete subprocess;
         return ReportError(protocol, error);
     }
 
-    D("subprocess creation successful: local_socket_fd=%d, pid=%d",
-      subprocess->local_socket_fd(), subprocess->pid());
-    return subprocess->local_socket_fd();
+    unique_fd local_socket(subprocess->ReleaseLocalSocket());
+    D("subprocess creation successful: local_socket_fd=%d, pid=%d", local_socket.get(),
+      subprocess->pid());
+
+    if (!Subprocess::StartThread(std::move(subprocess), &error)) {
+        LOG(ERROR) << "failed to start subprocess management thread: " << error;
+        return ReportError(protocol, error);
+    }
+
+    return local_socket.release();
 }

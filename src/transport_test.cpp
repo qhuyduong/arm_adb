@@ -20,27 +20,6 @@
 
 #include "adb.h"
 
-class TransportSetup {
-public:
-  TransportSetup() {
-#ifdef _WIN32
-    // Use extern instead of including sysdeps.h which brings in various macros
-    // that conflict with APIs used in this file.
-    extern void adb_sysdeps_init(void);
-    adb_sysdeps_init();
-#else
-    // adb_sysdeps_init() is an inline function that we cannot link against.
-#endif
-  }
-};
-
-// Static initializer will call adb_sysdeps_init() before main() to initialize
-// the transport mutex before it is used in the tests. Alternatives would be to
-// use __attribute__((constructor)) here or to use that or a static initializer
-// for adb_sysdeps_init() itself in sysdeps_win32.cpp (caveats of unclear
-// init order), or to use a test fixture whose SetUp() could do the init once.
-static TransportSetup g_TransportSetup;
-
 TEST(transport, kick_transport) {
   atransport t;
   static size_t kick_count;
@@ -115,12 +94,13 @@ TEST(transport, SetFeatures) {
 }
 
 TEST(transport, parse_banner_no_features) {
+    set_main_thread();
     atransport t;
 
     parse_banner("host::", &t);
 
     ASSERT_EQ(0U, t.features().size());
-    ASSERT_EQ(kCsHost, t.connection_state);
+    ASSERT_EQ(kCsHost, t.GetConnectionState());
 
     ASSERT_EQ(nullptr, t.product);
     ASSERT_EQ(nullptr, t.model);
@@ -134,7 +114,7 @@ TEST(transport, parse_banner_product_features) {
         "host::ro.product.name=foo;ro.product.model=bar;ro.product.device=baz;";
     parse_banner(banner, &t);
 
-    ASSERT_EQ(kCsHost, t.connection_state);
+    ASSERT_EQ(kCsHost, t.GetConnectionState());
 
     ASSERT_EQ(0U, t.features().size());
 
@@ -151,7 +131,7 @@ TEST(transport, parse_banner_features) {
         "features=woodly,doodly";
     parse_banner(banner, &t);
 
-    ASSERT_EQ(kCsHost, t.connection_state);
+    ASSERT_EQ(kCsHost, t.GetConnectionState());
 
     ASSERT_EQ(2U, t.features().size());
     ASSERT_TRUE(t.has_feature("woodly"));

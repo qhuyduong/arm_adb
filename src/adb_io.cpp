@@ -20,6 +20,8 @@
 
 #include <unistd.h>
 
+#include <thread>
+
 #include <android-base/stringprintf.h>
 
 #include "adb.h"
@@ -29,7 +31,7 @@
 
 bool SendProtocolString(int fd, const std::string& s) {
     unsigned int length = s.size();
-    if (length > MAX_PAYLOAD_V1 - 4) {
+    if (length > MAX_PAYLOAD - 4) {
         errno = EMSGSIZE;
         return false;
     }
@@ -104,7 +106,7 @@ bool WriteFdExactly(int fd, const void* buf, size_t len) {
         if (r == -1) {
             D("writex: fd=%d error %d: %s", fd, errno, strerror(errno));
             if (errno == EAGAIN) {
-                adb_sleep_ms(1); // just yield some cpu time
+                std::this_thread::yield();
                 continue;
             } else if (errno == EPIPE) {
                 D("writex: fd=%d disconnected", fd);

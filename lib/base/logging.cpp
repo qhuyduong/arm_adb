@@ -14,13 +14,15 @@
  * limitations under the License.
  */
 
-#ifdef _WIN32
+#if defined(_WIN32)
 #include <windows.h>
 #endif
 
 #include "android-base/logging.h"
 
+#include <fcntl.h>
 #include <libgen.h>
+#include <time.h>
 
 // For getprogname(3) or program_invocation_short_name.
 #if defined(__ANDROID__) || defined(__APPLE__)
@@ -29,29 +31,29 @@
 #include <errno.h>
 #endif
 
+#if defined(__linux__)
+#include <sys/uio.h>
+#endif
+
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <sstream>
 #include <string.h>
 #include <utility>
 #include <vector>
 
-#ifndef _WIN32
-#include <mutex>
-#endif
-
-#include "android-base/macros.h"
-#include "android-base/strings.h"
-#include "cutils/threads.h"
-
 // Headers for LogMessage::LogLine.
 #ifdef __ANDROID__
+#include <log/log.h>
 #include <android/set_abort_message.h>
-#include "cutils/log.h"
 #else
 #include <sys/types.h>
 #include <unistd.h>
 #endif
+
+#include <android-base/macros.h>
+#include <android-base/strings.h>
 
 // For gettid.
 #if defined(__APPLE__)
@@ -87,17 +89,11 @@ static thread_id GetThreadId() {
 }
 
 namespace {
-#ifndef _WIN32
-using std::mutex;
-using std::lock_guard;
-
 #if defined(__GLIBC__)
 const char* getprogname() {
   return program_invocation_short_name;
 }
-#endif
-
-#else
+#elif defined(_WIN32)
 const char* getprogname() {
   static bool first = true;
   static char progname[MAX_PATH] = {};
@@ -116,82 +112,108 @@ const char* getprogname() {
 
   return progname;
 }
-
-class mutex {
- public:
-  mutex() {
-    InitializeCriticalSection(&critical_section_);
-  }
-  ~mutex() {
-    DeleteCriticalSection(&critical_section_);
-  }
-
-  void lock() {
-    EnterCriticalSection(&critical_section_);
-  }
-
-  void unlock() {
-    LeaveCriticalSection(&critical_section_);
-  }
-
- private:
-  CRITICAL_SECTION critical_section_;
-};
-
-template <typename LockT>
-class lock_guard {
- public:
-  explicit lock_guard(LockT& lock) : lock_(lock) {
-    lock_.lock();
-  }
-
-  ~lock_guard() {
-    lock_.unlock();
-  }
-
- private:
-  LockT& lock_;
-
-  DISALLOW_COPY_AND_ASSIGN(lock_guard);
-};
 #endif
 } // namespace
 
 namespace android {
 namespace base {
 
-static auto& logging_lock = *new mutex();
+static std::mutex& LoggingLock() {
+  static auto& logging_lock = *new std::mutex();
+  return logging_lock;
+}
 
+static LogFunction& Logger() {
 #ifdef __ANDROID__
-static auto& gLogger = *new LogFunction(LogdLogger());
+  static auto& logger = *new LogFunction(LogdLogger());
 #else
-static auto& gLogger = *new LogFunction(StderrLogger);
+  static auto& logger = *new LogFunction(StderrLogger);
 #endif
+  return logger;
+}
+
+static AbortFunction& Aborter() {
+  static auto& aborter = *new AbortFunction(DefaultAborter);
+  return aborter;
+}
+
+static std::string& ProgramInvocationName() {
+  static auto& programInvocationName = *new std::string(getprogname());
+  return programInvocationName;
+}
 
 static bool gInitialized = false;
 static LogSeverity gMinimumLogSeverity = INFO;
-static auto& gProgramInvocationName = *new std::unique_ptr<std::string>();
 
-LogSeverity GetMinimumLogSeverity() {
-  return gMinimumLogSeverity;
-}
+#if defined(__linux__)
+void KernelLogger(android::base::LogId, android::base::LogSeverity severity,
+                  const char* tag, const char*, unsigned int, const char* msg) {
+  // clang-format off
+  static constexpr int kLogSeverityToKernelLogLevel[] = {
+      [android::base::VERBOSE] = 7,              // KERN_DEBUG (there is no verbose kernel log
+                                                 //             level)
+      [android::base::DEBUG] = 7,                // KERN_DEBUG
+      [android::base::INFO] = 6,                 // KERN_INFO
+      [android::base::WARNING] = 4,              // KERN_WARNING
+      [android::base::ERROR] = 3,                // KERN_ERROR
+      [android::base::FATAL_WITHOUT_ABORT] = 2,  // KERN_CRIT
+      [android::base::FATAL] = 2,                // KERN_CRIT
+  };
+  // clang-format on
+  static_assert(arraysize(kLogSeverityToKernelLogLevel) == android::base::FATAL + 1,
+                "Mismatch in size of kLogSeverityToKernelLogLevel and values in LogSeverity");
 
-static const char* ProgramInvocationName() {
-  if (gProgramInvocationName == nullptr) {
-    gProgramInvocationName.reset(new std::string(getprogname()));
+  static int klog_fd = TEMP_FAILURE_RETRY(open("/dev/kmsg", O_WRONLY | O_CLOEXEC));
+  if (klog_fd == -1) return;
+
+  int level = kLogSeverityToKernelLogLevel[severity];
+
+  // The kernel's printk buffer is only 1024 bytes.
+  // TODO: should we automatically break up long lines into multiple lines?
+  // Or we could log but with something like "..." at the end?
+  char buf[1024];
+  size_t size = snprintf(buf, sizeof(buf), "<%d>%s: %s\n", level, tag, msg);
+  if (size > sizeof(buf)) {
+    size = snprintf(buf, sizeof(buf), "<%d>%s: %zu-byte message too long for printk\n",
+                    level, tag, size);
   }
 
-  return gProgramInvocationName->c_str();
+  iovec iov[1];
+  iov[0].iov_base = buf;
+  iov[0].iov_len = size;
+  TEMP_FAILURE_RETRY(writev(klog_fd, iov, 1));
 }
+#endif
 
 void StderrLogger(LogId, LogSeverity severity, const char*, const char* file,
                   unsigned int line, const char* message) {
-  static const char log_characters[] = "VDIWEF";
+  struct tm now;
+  time_t t = time(nullptr);
+
+#if defined(_WIN32)
+  localtime_s(&now, &t);
+#else
+  localtime_r(&t, &now);
+#endif
+
+  char timestamp[32];
+  strftime(timestamp, sizeof(timestamp), "%m-%d %H:%M:%S", &now);
+
+  static const char log_characters[] = "VDIWEFF";
   static_assert(arraysize(log_characters) - 1 == FATAL + 1,
                 "Mismatch in size of log_characters and values in LogSeverity");
   char severity_char = log_characters[severity];
-  fprintf(stderr, "%s %c %5d %5d %s:%u] %s\n", ProgramInvocationName(),
-          severity_char, getpid(), GetThreadId(), file, line, message);
+  fprintf(stderr, "%s %c %s %5d %5d %s:%u] %s\n", ProgramInvocationName().c_str(),
+          severity_char, timestamp, getpid(), GetThreadId(), file, line, message);
+}
+
+void DefaultAborter(const char* abort_message) {
+#ifdef __ANDROID__
+  android_set_abort_message(abort_message);
+#else
+  UNUSED(abort_message);
+#endif
+  abort();
 }
 
 
@@ -199,28 +221,27 @@ void StderrLogger(LogId, LogSeverity severity, const char*, const char* file,
 LogdLogger::LogdLogger(LogId default_log_id) : default_log_id_(default_log_id) {
 }
 
-static const android_LogPriority kLogSeverityToAndroidLogPriority[] = {
-    ANDROID_LOG_VERBOSE, ANDROID_LOG_DEBUG, ANDROID_LOG_INFO,
-    ANDROID_LOG_WARN,    ANDROID_LOG_ERROR, ANDROID_LOG_FATAL,
-};
-static_assert(arraysize(kLogSeverityToAndroidLogPriority) == FATAL + 1,
-              "Mismatch in size of kLogSeverityToAndroidLogPriority and values "
-              "in LogSeverity");
-
-static const log_id kLogIdToAndroidLogId[] = {
-    LOG_ID_MAX, LOG_ID_MAIN, LOG_ID_SYSTEM,
-};
-static_assert(arraysize(kLogIdToAndroidLogId) == SYSTEM + 1,
-              "Mismatch in size of kLogIdToAndroidLogId and values in LogId");
-
 void LogdLogger::operator()(LogId id, LogSeverity severity, const char* tag,
                             const char* file, unsigned int line,
                             const char* message) {
+  static constexpr android_LogPriority kLogSeverityToAndroidLogPriority[] = {
+      ANDROID_LOG_VERBOSE, ANDROID_LOG_DEBUG, ANDROID_LOG_INFO,
+      ANDROID_LOG_WARN,    ANDROID_LOG_ERROR, ANDROID_LOG_FATAL,
+      ANDROID_LOG_FATAL,
+  };
+  static_assert(arraysize(kLogSeverityToAndroidLogPriority) == FATAL + 1,
+                "Mismatch in size of kLogSeverityToAndroidLogPriority and values in LogSeverity");
+
   int priority = kLogSeverityToAndroidLogPriority[severity];
   if (id == DEFAULT) {
     id = default_log_id_;
   }
 
+  static constexpr log_id kLogIdToAndroidLogId[] = {
+    LOG_ID_MAX, LOG_ID_MAIN, LOG_ID_SYSTEM,
+  };
+  static_assert(arraysize(kLogIdToAndroidLogId) == SYSTEM + 1,
+                "Mismatch in size of kLogIdToAndroidLogId and values in LogId");
   log_id lg_id = kLogIdToAndroidLogId[id];
 
   if (priority == ANDROID_LOG_FATAL) {
@@ -232,12 +253,10 @@ void LogdLogger::operator()(LogId id, LogSeverity severity, const char* tag,
 }
 #endif
 
-void InitLogging(char* argv[], LogFunction&& logger) {
+void InitLogging(char* argv[], LogFunction&& logger, AbortFunction&& aborter) {
   SetLogger(std::forward<LogFunction>(logger));
-  InitLogging(argv);
-}
+  SetAborter(std::forward<AbortFunction>(aborter));
 
-void InitLogging(char* argv[]) {
   if (gInitialized) {
     return;
   }
@@ -248,7 +267,8 @@ void InitLogging(char* argv[]) {
   // Linux to recover this, but we don't have that luxury on the Mac/Windows,
   // and there are a couple of argv[0] variants that are commonly used.
   if (argv != nullptr) {
-    gProgramInvocationName.reset(new std::string(basename(argv[0])));
+    std::lock_guard<std::mutex> lock(LoggingLock());
+    ProgramInvocationName() = basename(argv[0]);
   }
 
   const char* tags = getenv("ANDROID_LOG_TAGS");
@@ -278,12 +298,12 @@ void InitLogging(char* argv[]) {
           gMinimumLogSeverity = ERROR;
           continue;
         case 'f':
-          gMinimumLogSeverity = FATAL;
+          gMinimumLogSeverity = FATAL_WITHOUT_ABORT;
           continue;
         // liblog will even suppress FATAL if you say 's' for silent, but that's
         // crazy!
         case 's':
-          gMinimumLogSeverity = FATAL;
+          gMinimumLogSeverity = FATAL_WITHOUT_ABORT;
           continue;
       }
     }
@@ -293,8 +313,13 @@ void InitLogging(char* argv[]) {
 }
 
 void SetLogger(LogFunction&& logger) {
-  lock_guard<mutex> lock(logging_lock);
-  gLogger = std::move(logger);
+  std::lock_guard<std::mutex> lock(LoggingLock());
+  Logger() = std::move(logger);
+}
+
+void SetAborter(AbortFunction&& aborter) {
+  std::lock_guard<std::mutex> lock(LoggingLock());
+  Aborter() = std::move(aborter);
 }
 
 static const char* GetFileBasename(const char* file) {
@@ -371,6 +396,11 @@ LogMessage::LogMessage(const char* file, unsigned int line, LogId id,
 }
 
 LogMessage::~LogMessage() {
+  // Check severity again. This is duplicate work wrt/ LOG macros, but not LOG_STREAM.
+  if (!WOULD_LOG(data_->GetSeverity())) {
+    return;
+  }
+
   // Finish constructing the message.
   if (data_->GetError() != -1) {
     data_->GetBuffer() << ": " << strerror(data_->GetError());
@@ -379,7 +409,7 @@ LogMessage::~LogMessage() {
 
   {
     // Do the actual logging with the lock held.
-    lock_guard<mutex> lock(logging_lock);
+    std::lock_guard<std::mutex> lock(LoggingLock());
     if (msg.find('\n') == std::string::npos) {
       LogLine(data_->GetFile(), data_->GetLineNumber(), data_->GetId(),
               data_->GetSeverity(), msg.c_str());
@@ -391,6 +421,8 @@ LogMessage::~LogMessage() {
         msg[nl] = '\0';
         LogLine(data_->GetFile(), data_->GetLineNumber(), data_->GetId(),
                 data_->GetSeverity(), &msg[i]);
+        // Undo the zero-termination so we can give the complete message to the aborter.
+        msg[nl] = '\n';
         i = nl + 1;
       }
     }
@@ -398,10 +430,7 @@ LogMessage::~LogMessage() {
 
   // Abort if necessary.
   if (data_->GetSeverity() == FATAL) {
-#ifdef __ANDROID__
-    android_set_abort_message(msg.c_str());
-#endif
-    abort();
+    Aborter()(msg.c_str());
   }
 }
 
@@ -411,17 +440,26 @@ std::ostream& LogMessage::stream() {
 
 void LogMessage::LogLine(const char* file, unsigned int line, LogId id,
                          LogSeverity severity, const char* message) {
-  const char* tag = ProgramInvocationName();
-  gLogger(id, severity, tag, file, line, message);
+  const char* tag = ProgramInvocationName().c_str();
+  Logger()(id, severity, tag, file, line, message);
 }
 
-ScopedLogSeverity::ScopedLogSeverity(LogSeverity level) {
-  old_ = gMinimumLogSeverity;
-  gMinimumLogSeverity = level;
+LogSeverity GetMinimumLogSeverity() {
+    return gMinimumLogSeverity;
+}
+
+LogSeverity SetMinimumLogSeverity(LogSeverity new_severity) {
+  LogSeverity old_severity = gMinimumLogSeverity;
+  gMinimumLogSeverity = new_severity;
+  return old_severity;
+}
+
+ScopedLogSeverity::ScopedLogSeverity(LogSeverity new_severity) {
+  old_ = SetMinimumLogSeverity(new_severity);
 }
 
 ScopedLogSeverity::~ScopedLogSeverity() {
-  gMinimumLogSeverity = old_;
+  SetMinimumLogSeverity(old_);
 }
 
 }  // namespace base

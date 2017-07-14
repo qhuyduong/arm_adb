@@ -17,6 +17,37 @@
 #ifndef ANDROID_BASE_LOGGING_H
 #define ANDROID_BASE_LOGGING_H
 
+//
+// Google-style C++ logging.
+//
+
+// This header provides a C++ stream interface to logging.
+//
+// To log:
+//
+//   LOG(INFO) << "Some text; " << some_value;
+//
+// Replace `INFO` with any severity from `enum LogSeverity`.
+//
+// To log the result of a failed function and include the string
+// representation of `errno` at the end:
+//
+//   PLOG(ERROR) << "Write failed";
+//
+// The output will be something like `Write failed: I/O error`.
+// Remember this as 'P' as in perror(3).
+//
+// To output your own types, simply implement operator<< as normal.
+//
+// By default, output goes to logcat on Android and stderr on the host.
+// A process can use `SetLogger` to decide where all logging goes.
+// Implementations are provided for logcat, stderr, and dmesg.
+
+// This header also provides assertions:
+//
+//   CHECK(must_be_true);
+//   CHECK_EQ(a, b) << z_is_interesting_too;
+
 // NOTE: For Windows, you must include logging.h after windows.h to allow the
 // following code to suppress the evil ERROR macro:
 #ifdef _WIN32
@@ -41,6 +72,7 @@ enum LogSeverity {
   INFO,
   WARNING,
   ERROR,
+  FATAL_WITHOUT_ABORT,
   FATAL,
 };
 
@@ -50,11 +82,14 @@ enum LogId {
   SYSTEM,
 };
 
-typedef std::function<void(LogId, LogSeverity, const char*, const char*,
-                           unsigned int, const char*)> LogFunction;
+using LogFunction = std::function<void(LogId, LogSeverity, const char*, const char*,
+                                       unsigned int, const char*)>;
+using AbortFunction = std::function<void(const char*)>;
 
-extern void StderrLogger(LogId, LogSeverity, const char*, const char*,
-                         unsigned int, const char*);
+void KernelLogger(LogId, LogSeverity, const char*, const char*, unsigned int, const char*);
+void StderrLogger(LogId, LogSeverity, const char*, const char*, unsigned int, const char*);
+
+void DefaultAborter(const char* abort_message);
 
 #ifdef __ANDROID__
 // We expose this even though it is the default because a user that wants to
@@ -79,17 +114,21 @@ class LogdLogger {
 // The tag (or '*' for the global level) comes first, followed by a colon and a
 // letter indicating the minimum priority level we're expected to log.  This can
 // be used to reveal or conceal logs with specific tags.
-extern void InitLogging(char* argv[], LogFunction&& logger);
-
-// Configures logging using the default logger (logd for the device, stderr for
-// the host).
-extern void InitLogging(char* argv[]);
+#ifdef __ANDROID__
+#define INIT_LOGGING_DEFAULT_LOGGER LogdLogger()
+#else
+#define INIT_LOGGING_DEFAULT_LOGGER StderrLogger
+#endif
+void InitLogging(char* argv[],
+                 LogFunction&& logger = INIT_LOGGING_DEFAULT_LOGGER,
+                 AbortFunction&& aborter = DefaultAborter);
+#undef INIT_LOGGING_DEFAULT_LOGGER
 
 // Replace the current logger.
-extern void SetLogger(LogFunction&& logger);
+void SetLogger(LogFunction&& logger);
 
-// Get the minimum severity level for logging.
-extern LogSeverity GetMinimumLogSeverity();
+// Replace the current aborter.
+void SetAborter(AbortFunction&& aborter);
 
 class ErrnoRestorer {
  public:
@@ -112,48 +151,95 @@ class ErrnoRestorer {
   DISALLOW_COPY_AND_ASSIGN(ErrnoRestorer);
 };
 
+// A helper macro that produces an expression that accepts both a qualified name and an
+// unqualified name for a LogSeverity, and returns a LogSeverity value.
+// Note: DO NOT USE DIRECTLY. This is an implementation detail.
+#define SEVERITY_LAMBDA(severity) ([&]() {    \
+  using ::android::base::VERBOSE;             \
+  using ::android::base::DEBUG;               \
+  using ::android::base::INFO;                \
+  using ::android::base::WARNING;             \
+  using ::android::base::ERROR;               \
+  using ::android::base::FATAL_WITHOUT_ABORT; \
+  using ::android::base::FATAL;               \
+  return (severity); }())
+
+#ifdef __clang_analyzer__
+// Clang's static analyzer does not see the conditional statement inside
+// LogMessage's destructor that will abort on FATAL severity.
+#define ABORT_AFTER_LOG_FATAL for (;; abort())
+
+struct LogAbortAfterFullExpr {
+  ~LogAbortAfterFullExpr() __attribute__((noreturn)) { abort(); }
+  explicit operator bool() const { return false; }
+};
+// Provides an expression that evaluates to the truthiness of `x`, automatically
+// aborting if `c` is true.
+#define ABORT_AFTER_LOG_EXPR_IF(c, x) (((c) && ::android::base::LogAbortAfterFullExpr()) || (x))
+// Note to the static analyzer that we always execute FATAL logs in practice.
+#define MUST_LOG_MESSAGE(severity) (SEVERITY_LAMBDA(severity) == ::android::base::FATAL)
+#else
+#define ABORT_AFTER_LOG_FATAL
+#define ABORT_AFTER_LOG_EXPR_IF(c, x) (x)
+#define MUST_LOG_MESSAGE(severity) false
+#endif
+#define ABORT_AFTER_LOG_FATAL_EXPR(x) ABORT_AFTER_LOG_EXPR_IF(true, x)
+
+// Defines whether the given severity will be logged or silently swallowed.
+#define WOULD_LOG(severity) \
+  (UNLIKELY((SEVERITY_LAMBDA(severity)) >= ::android::base::GetMinimumLogSeverity()) || \
+   MUST_LOG_MESSAGE(severity))
+
+// Get an ostream that can be used for logging at the given severity and to the default
+// destination.
+//
+// Notes:
+// 1) This will not check whether the severity is high enough. One should use WOULD_LOG to filter
+//    usage manually.
+// 2) This does not save and restore errno.
+#define LOG_STREAM(severity) LOG_STREAM_TO(DEFAULT, severity)
+
+// Get an ostream that can be used for logging at the given severity and to the
+// given destination. The same notes as for LOG_STREAM apply.
+#define LOG_STREAM_TO(dest, severity)                                   \
+  ::android::base::LogMessage(__FILE__, __LINE__,                       \
+                              ::android::base::dest,                    \
+                              SEVERITY_LAMBDA(severity), -1).stream()
+
 // Logs a message to logcat on Android otherwise to stderr. If the severity is
 // FATAL it also causes an abort. For example:
 //
 //     LOG(FATAL) << "We didn't expect to reach here";
 #define LOG(severity) LOG_TO(DEFAULT, severity)
 
+// Checks if we want to log something, and sets up appropriate RAII objects if
+// so.
+// Note: DO NOT USE DIRECTLY. This is an implementation detail.
+#define LOGGING_PREAMBLE(severity)                                                         \
+  (WOULD_LOG(severity) &&                                                                  \
+   ABORT_AFTER_LOG_EXPR_IF((SEVERITY_LAMBDA(severity)) == ::android::base::FATAL, true) && \
+   ::android::base::ErrnoRestorer())
+
 // Logs a message to logcat with the specified log ID on Android otherwise to
 // stderr. If the severity is FATAL it also causes an abort.
-// Use an if-else statement instead of just an if statement here. So if there is a
-// else statement after LOG() macro, it won't bind to the if statement in the macro.
-// do-while(0) statement doesn't work here. Because we need to support << operator
-// following the macro, like "LOG(DEBUG) << xxx;".
-#define LOG_TO(dest, severity)                                                        \
-  UNLIKELY(::android::base::severity >= ::android::base::GetMinimumLogSeverity()) &&  \
-    ::android::base::ErrnoRestorer() &&                                               \
-      ::android::base::LogMessage(__FILE__, __LINE__,                                 \
-          ::android::base::dest,                                                      \
-          ::android::base::severity, -1).stream()
+// Use an expression here so we can support the << operator following the macro,
+// like "LOG(DEBUG) << xxx;".
+#define LOG_TO(dest, severity) LOGGING_PREAMBLE(severity) && LOG_STREAM_TO(dest, severity)
 
 // A variant of LOG that also logs the current errno value. To be used when
 // library calls fail.
 #define PLOG(severity) PLOG_TO(DEFAULT, severity)
 
 // Behaves like PLOG, but logs to the specified log ID.
-#define PLOG_TO(dest, severity)                                                      \
-  UNLIKELY(::android::base::severity >= ::android::base::GetMinimumLogSeverity()) && \
-    ::android::base::ErrnoRestorer() &&                                              \
-      ::android::base::LogMessage(__FILE__, __LINE__,                                \
-          ::android::base::dest,                                                     \
-          ::android::base::severity, errno).stream()
+#define PLOG_TO(dest, severity)                                              \
+  LOGGING_PREAMBLE(severity) &&                                              \
+      ::android::base::LogMessage(__FILE__, __LINE__, ::android::base::dest, \
+                                  SEVERITY_LAMBDA(severity), errno)          \
+          .stream()
 
 // Marker that code is yet to be implemented.
 #define UNIMPLEMENTED(level) \
   LOG(level) << __PRETTY_FUNCTION__ << " unimplemented "
-
-#ifdef __clang_analyzer__
-// ClangL static analyzer does not see the conditional statement inside
-// LogMessage's destructor that will abort on FATAL severity.
-#define ABORT_AFTER_LOG_FATAL for (;;abort())
-#else
-#define ABORT_AFTER_LOG_FATAL
-#endif
 
 // Check whether condition x holds and LOG(FATAL) if not. The value of the
 // expression x is only evaluated once. Extra logging can be appended using <<
@@ -161,12 +247,12 @@ class ErrnoRestorer {
 //
 //     CHECK(false == true) results in a log message of
 //       "Check failed: false == true".
-#define CHECK(x)                                                              \
-  LIKELY((x)) ||                                                              \
-    ABORT_AFTER_LOG_FATAL                                                     \
-    ::android::base::LogMessage(__FILE__, __LINE__, ::android::base::DEFAULT, \
-                                ::android::base::FATAL, -1).stream()          \
-        << "Check failed: " #x << " "
+#define CHECK(x)                                                                \
+  LIKELY((x)) || ABORT_AFTER_LOG_FATAL_EXPR(false) ||                           \
+      ::android::base::LogMessage(                                              \
+          __FILE__, __LINE__, ::android::base::DEFAULT, ::android::base::FATAL, \
+          -1).stream()                                                          \
+          << "Check failed: " #x << " "
 
 // Helper for CHECK_xx(x,y) macros.
 #define CHECK_OP(LHS, RHS, OP)                                              \
@@ -193,14 +279,13 @@ class ErrnoRestorer {
 #define CHECK_GT(x, y) CHECK_OP(x, y, > )
 
 // Helper for CHECK_STRxx(s1,s2) macros.
-#define CHECK_STROP(s1, s2, sense)                                         \
-  if (LIKELY((strcmp(s1, s2) == 0) == sense))                              \
-    ;                                                                      \
-  else                                                                     \
-    ABORT_AFTER_LOG_FATAL                                                  \
-    LOG(FATAL) << "Check failed: "                                         \
-               << "\"" << s1 << "\""                                       \
-               << (sense ? " == " : " != ") << "\"" << s2 << "\""
+#define CHECK_STROP(s1, s2, sense)                                             \
+  while (UNLIKELY((strcmp(s1, s2) == 0) != (sense)))                           \
+    ABORT_AFTER_LOG_FATAL                                                      \
+    ::android::base::LogMessage(__FILE__, __LINE__, ::android::base::DEFAULT,  \
+                                ::android::base::FATAL, -1).stream()           \
+        << "Check failed: " << "\"" << (s1) << "\""                            \
+        << ((sense) ? " == " : " != ") << "\"" << (s2) << "\""
 
 // Check for string (const char*) equality between s1 and s2, LOG(FATAL) if not.
 #define CHECK_STREQ(s1, s2) CHECK_STROP(s1, s2, true)
@@ -213,7 +298,7 @@ class ErrnoRestorer {
     if (rc != 0) {                                                     \
       errno = rc;                                                      \
       ABORT_AFTER_LOG_FATAL                                            \
-      PLOG(FATAL) << #call << " failed for " << what; \
+      PLOG(FATAL) << #call << " failed for " << (what);                \
     }                                                                  \
   } while (false)
 
@@ -234,7 +319,7 @@ class ErrnoRestorer {
 // DCHECKs are debug variants of CHECKs only enabled in debug builds. Generally
 // CHECK should be used unless profiling identifies a CHECK as being in
 // performance critical code.
-#if defined(NDEBUG)
+#if defined(NDEBUG) && !defined(__clang_analyzer__)
 static constexpr bool kEnableDChecks = false;
 #else
 static constexpr bool kEnableDChecks = true;
@@ -258,7 +343,7 @@ static constexpr bool kEnableDChecks = true;
   if (::android::base::kEnableDChecks) CHECK_STREQ(s1, s2)
 #define DCHECK_STRNE(s1, s2) \
   if (::android::base::kEnableDChecks) CHECK_STRNE(s1, s2)
-#if defined(NDEBUG)
+#if defined(NDEBUG) && !defined(__clang_analyzer__)
 #define DCHECK_CONSTEXPR(x, out, dummy)
 #else
 #define DCHECK_CONSTEXPR(x, out, dummy) CHECK_CONSTEXPR(x, out, dummy)
@@ -268,7 +353,7 @@ static constexpr bool kEnableDChecks = true;
 // MakeEagerEvaluator to infer the types of LHS and RHS.
 template <typename LHS, typename RHS>
 struct EagerEvaluator {
-  EagerEvaluator(LHS l, RHS r) : lhs(l), rhs(r) {
+  constexpr EagerEvaluator(LHS l, RHS r) : lhs(l), rhs(r) {
   }
   LHS lhs;
   RHS rhs;
@@ -276,7 +361,7 @@ struct EagerEvaluator {
 
 // Helper function for CHECK_xx.
 template <typename LHS, typename RHS>
-static inline EagerEvaluator<LHS, RHS> MakeEagerEvaluator(LHS lhs, RHS rhs) {
+constexpr EagerEvaluator<LHS, RHS> MakeEagerEvaluator(LHS lhs, RHS rhs) {
   return EagerEvaluator<LHS, RHS>(lhs, rhs);
 }
 
@@ -333,6 +418,12 @@ class LogMessage {
 
   DISALLOW_COPY_AND_ASSIGN(LogMessage);
 };
+
+// Get the minimum severity level for logging.
+LogSeverity GetMinimumLogSeverity();
+
+// Set the minimum severity level for logging, returning the old severity.
+LogSeverity SetMinimumLogSeverity(LogSeverity new_severity);
 
 // Allows to temporarily change the minimum severity level for logging.
 class ScopedLogSeverity {

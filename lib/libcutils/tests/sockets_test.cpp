@@ -18,10 +18,12 @@
 // IPv6 capabilities. These tests assume that no UDP packets are lost, which
 // should be the case for loopback communication, but is not guaranteed.
 
-#include <cutils/sockets.h>
-
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 #include <time.h>
 
+#include <cutils/sockets.h>
 #include <gtest/gtest.h>
 
 // Makes sure the passed sockets are valid, sends data between them, and closes
@@ -99,7 +101,7 @@ TEST(SocketsTest, TestGetLocalPort) {
     // should always be able to read its port.
     for (int port : {10000, 12345, 15999, 20202, 25000}) {
         for (int type : {SOCK_DGRAM, SOCK_STREAM}) {
-            server = socket_inaddr_any_server(port, SOCK_DGRAM);
+            server = socket_inaddr_any_server(port, type);
             if (server != INVALID_SOCKET) {
                 EXPECT_EQ(port, socket_get_local_port(server));
             }

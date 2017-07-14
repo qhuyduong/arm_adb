@@ -22,7 +22,9 @@
 
 #define MKID(a,b,c,d) ((a) | ((b) << 8) | ((c) << 16) | ((d) << 24))
 
-#define ID_STAT MKID('S','T','A','T')
+#define ID_LSTAT_V1 MKID('S','T','A','T')
+#define ID_STAT_V2 MKID('S','T','A','2')
+#define ID_LSTAT_V2 MKID('L','S','T','2')
 #define ID_LIST MKID('L','I','S','T')
 #define ID_SEND MKID('S','E','N','D')
 #define ID_RECV MKID('R','E','C','V')
@@ -45,7 +47,21 @@ union syncmsg {
         uint32_t mode;
         uint32_t size;
         uint32_t time;
-    } stat;
+    } stat_v1;
+    struct __attribute__((packed)) {
+        uint32_t id;
+        uint32_t error;
+        uint64_t dev;
+        uint64_t ino;
+        uint32_t mode;
+        uint32_t nlink;
+        uint32_t uid;
+        uint32_t gid;
+        uint64_t size;
+        int64_t atime;
+        int64_t mtime;
+        int64_t ctime;
+    } stat_v2;
     struct __attribute__((packed)) {
         uint32_t id;
         uint32_t mode;
@@ -65,9 +81,9 @@ union syncmsg {
 
 void file_sync_service(int fd, void* cookie);
 bool do_sync_ls(const char* path);
-bool do_sync_push(const std::vector<const char*>& srcs, const char* dst);
+bool do_sync_push(const std::vector<const char*>& srcs, const char* dst, bool sync);
 bool do_sync_pull(const std::vector<const char*>& srcs, const char* dst,
-                  bool copy_attrs);
+                  bool copy_attrs, const char* name=nullptr);
 
 bool do_sync_sync(const std::string& lpath, const std::string& rpath, bool list_only);
 

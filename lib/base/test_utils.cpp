@@ -57,7 +57,13 @@ char* mkdtemp(char* template_name) {
 
 static std::string GetSystemTempDir() {
 #if defined(__ANDROID__)
-  return "/data/local/tmp";
+  const char* tmpdir = "/data/local/tmp";
+  if (access(tmpdir, R_OK | W_OK | X_OK) == 0) {
+    return tmpdir;
+  }
+  // Tests running in app context can't access /data/local/tmp,
+  // so try current directory if /data/local/tmp is not accessible.
+  return ".";
 #elif defined(_WIN32)
   char tmp_dir[MAX_PATH];
   DWORD result = GetTempPathA(sizeof(tmp_dir), tmp_dir);
@@ -101,4 +107,33 @@ bool TemporaryDir::init(const std::string& tmp_dir) {
   snprintf(path, sizeof(path), "%s%cTemporaryDir-XXXXXX", tmp_dir.c_str(),
            OS_PATH_SEPARATOR);
   return (mkdtemp(path) != nullptr);
+}
+
+CapturedStderr::CapturedStderr() : old_stderr_(-1) {
+  init();
+}
+
+CapturedStderr::~CapturedStderr() {
+  reset();
+}
+
+int CapturedStderr::fd() const {
+  return temp_file_.fd;
+}
+
+void CapturedStderr::init() {
+#if defined(_WIN32)
+  // On Windows, stderr is often buffered, so make sure it is unbuffered so
+  // that we can immediately read back what was written to stderr.
+  CHECK_EQ(0, setvbuf(stderr, NULL, _IONBF, 0));
+#endif
+  old_stderr_ = dup(STDERR_FILENO);
+  CHECK_NE(-1, old_stderr_);
+  CHECK_NE(-1, dup2(fd(), STDERR_FILENO));
+}
+
+void CapturedStderr::reset() {
+  CHECK_NE(-1, dup2(old_stderr_, STDERR_FILENO));
+  CHECK_EQ(0, close(old_stderr_));
+  // Note: cannot restore prior setvbuf() setting.
 }

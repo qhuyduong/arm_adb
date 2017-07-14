@@ -18,9 +18,8 @@ $ make
 ### Cross-compiling
 #### Cross-compile Openssl
 ```bash
-$ wget https://www.openssl.org/source/openssl-1.0.2l.tar.gz -O /tmp/openssl-1.0.2l.tar.gz
-$ tar xf /tmp/openssl-1.0.2l.tar.gz -C /tmp/
-$ cd /tmp/openssl-1.0.2l/
+$ git clone https://github.com/hduong85/openssl-1.0.2l.git
+$ cd openssl-1.0.2l/
 $ ./Configure --prefix=/tmp/openssl os/compiler:$TOOLCHAIN_PREFIX-gcc
 $ make && make install
 $ cd -

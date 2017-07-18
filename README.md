@@ -9,10 +9,20 @@ NOTE: Please make sure you are using navite/cross gcc >= 4.9
 
 ## How to build and run
 ### Native compiling
+#### Native-compile openssl
+```bash
+$ git clone https://github.com/hduong85/openssl-1.0.2l.git
+$ cd openssl-1.0.2l/
+$ ./Configure --prefix=/tmp/openssl os/compiler:gcc
+$ make && make install
+$ cd -
+```
+
+#### Native-compile arm_adb
 ```bash
 $ git clone https://github.com/hduong85/arm_adb
 $ cd arm_adb
-$ ./configure
+$ ./configure --includedir=/tmp/openssl/include --libdir=/tmp/openssl/lib
 $ make
 ```
 

@@ -1,57 +1,64 @@
+/*
+ * Copyright (C) 2015 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #ifndef _ADB_CLIENT_H_
 #define _ADB_CLIENT_H_
 
 #include "adb.h"
+#include "sysdeps.h"
+#include "transport.h"
 
-/* connect to adb, connect to the named service, and return
-** a valid fd for interacting with that service upon success
-** or a negative number on failure
-*/
-int adb_connect(const char *service);
-int _adb_connect(const char *service);
+#include <string>
 
-/* connect to adb, connect to the named service, return 0 if
-** the connection succeeded AND the service returned OKAY
-*/
-int adb_command(const char *service);
+// Connect to adb, connect to the named service, and return a valid fd for
+// interacting with that service upon success or a negative number on failure.
+int adb_connect(const std::string& service, std::string* error);
 
-/* connect to adb, connect to the named service, return
-** a malloc'd string of its response upon success or NULL
-** on failure.
-*/
-char *adb_query(const char *service);
+// Kill the currently running adb server, if it exists.
+bool adb_kill_server();
 
-/* Set the preferred transport to connect to.
-*/
-void adb_set_transport(transport_type type, const char* serial);
+// Connect to adb, connect to the named service, returns true if the connection
+// succeeded AND the service returned OKAY. Outputs any returned error otherwise.
+bool adb_command(const std::string& service);
 
-/* Set TCP specifics of the transport to use
-*/
-void adb_set_tcp_specifics(int server_port);
+// Connects to the named adb service and fills 'result' with the response.
+// Returns true on success; returns false and fills 'error' on failure.
+bool adb_query(const std::string& service, std::string* result, std::string* error);
 
-/* Set TCP Hostname of the transport to use
-*/
-void adb_set_tcp_name(const char* hostname);
+// Set the preferred transport to connect to.
+void adb_set_transport(TransportType type, const char* serial);
 
-/* Return the console port of the currently connected emulator (if any)
- * of -1 if there is no emulator, and -2 if there is more than one.
- * assumes adb_set_transport() was alled previously...
- */
-int  adb_get_emulator_console_port(void);
+// Set the socket specification for the adb server.
+// This function can only be called once, and the argument must live to the end of the process.
+void adb_set_socket_spec(const char* socket_spec);
 
-/* send commands to the current emulator instance. will fail if there
- * is zero, or more than one emulator connected (or if you use -s <serial>
- * with a <serial> that does not designate an emulator)
- */
-int  adb_send_emulator_command(int  argc, char**  argv);
+// Send commands to the current emulator instance. Will fail if there is not
+// exactly one emulator connected (or if you use -s <serial> with a <serial>
+// that does not designate an emulator).
+int adb_send_emulator_command(int argc, const char** argv, const char* serial);
 
-/* return verbose error string from last operation */
-const char *adb_error(void);
+// Reads a standard adb status response (OKAY|FAIL) and returns true in the
+// event of OKAY, false in the event of FAIL or protocol error.
+bool adb_status(int fd, std::string* error);
 
-/* read a standard adb status response (OKAY|FAIL) and
-** return 0 in the event of OKAY, -1 in the event of FAIL
-** or protocol error
-*/
-int adb_status(int fd);
+// Create a host command corresponding to selected transport type/serial.
+std::string format_host_command(const char* command, TransportType type,
+                                const char* serial);
+
+// Get the feature set of the current preferred transport.
+bool adb_get_feature_set(FeatureSet* feature_set, std::string* error);
 
 #endif

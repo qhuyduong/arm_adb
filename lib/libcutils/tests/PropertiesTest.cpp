@@ -15,20 +15,22 @@
  */
 
 #define LOG_TAG "Properties_test"
-#include <utils/Log.h>
-#include <gtest/gtest.h>
 
-#include <cutils/properties.h>
 #include <limits.h>
-#include <string>
-#include <sstream>
+
 #include <iostream>
+#include <sstream>
+#include <string>
+
+#include <android/log.h>
+#include <android-base/macros.h>
+#include <cutils/properties.h>
+#include <gtest/gtest.h>
 
 namespace android {
 
 #define STRINGIFY_INNER(x) #x
 #define STRINGIFY(x) STRINGIFY_INNER(x)
-#define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
 #define ASSERT_OK(x) ASSERT_EQ(0, (x))
 #define EXPECT_OK(x) EXPECT_EQ(0, (x))
 
@@ -85,7 +87,7 @@ protected:
     }
 
     void ResetValue(unsigned char c = 0xFF) {
-        for (size_t i = 0; i < ARRAY_SIZE(mValue); ++i) {
+        for (size_t i = 0; i < arraysize(mValue); ++i) {
             mValue[i] = (char) c;
         }
     }
@@ -106,14 +108,14 @@ TEST_F(PropertiesTest, SetString) {
         ResetValue();
 
         // Since the value is null, default value will be returned
-        int len = property_get(PROPERTY_TEST_KEY, mValue, PROPERTY_TEST_VALUE_DEFAULT);
+        size_t len = property_get(PROPERTY_TEST_KEY, mValue, PROPERTY_TEST_VALUE_DEFAULT);
         EXPECT_EQ(strlen(PROPERTY_TEST_VALUE_DEFAULT), len);
         EXPECT_STREQ(PROPERTY_TEST_VALUE_DEFAULT, mValue);
     }
 
     // Trivial case => get returns what was set
     {
-        int len = SetAndGetProperty("hello_world");
+        size_t len = SetAndGetProperty("hello_world");
         EXPECT_EQ(strlen("hello_world"), len) << "hello_world key";
         EXPECT_STREQ("hello_world", mValue);
         ResetValue();
@@ -122,7 +124,7 @@ TEST_F(PropertiesTest, SetString) {
     // Set to empty string => get returns default always
     {
         const char* EMPTY_STRING_DEFAULT = "EMPTY_STRING";
-        int len = SetAndGetProperty("", EMPTY_STRING_DEFAULT);
+        size_t len = SetAndGetProperty("", EMPTY_STRING_DEFAULT);
         EXPECT_EQ(strlen(EMPTY_STRING_DEFAULT), len) << "empty key";
         EXPECT_STREQ(EMPTY_STRING_DEFAULT, mValue);
         ResetValue();
@@ -147,7 +149,7 @@ TEST_F(PropertiesTest, SetString) {
 
         // Expect that the value set fails since it's too long
         EXPECT_GT(0, property_set(PROPERTY_TEST_KEY, oneLongerString.c_str()));
-        int len = property_get(PROPERTY_TEST_KEY, mValue, PROPERTY_TEST_VALUE_DEFAULT);
+        size_t len = property_get(PROPERTY_TEST_KEY, mValue, PROPERTY_TEST_VALUE_DEFAULT);
 
         EXPECT_EQ(strlen(VALID_TEST_VALUE), len) << "set should've failed";
         EXPECT_STREQ(VALID_TEST_VALUE, mValue);
@@ -157,17 +159,66 @@ TEST_F(PropertiesTest, SetString) {
 
 TEST_F(PropertiesTest, GetString) {
 
-    // Try to use a default value that's too long => set fails
+    // Try to use a default value that's too long => get truncates the value
     {
         ASSERT_OK(property_set(PROPERTY_TEST_KEY, ""));
 
-        std::string maxLengthString = std::string(PROPERTY_VALUE_MAX-1, 'a');
+        std::string maxLengthString = std::string(PROPERTY_VALUE_MAX - 1, 'a');
         std::string oneLongerString = std::string(PROPERTY_VALUE_MAX, 'a');
 
         // Expect that the value is truncated since it's too long (by 1)
         int len = property_get(PROPERTY_TEST_KEY, mValue, oneLongerString.c_str());
-        EXPECT_EQ(PROPERTY_VALUE_MAX-1, len);
+        EXPECT_EQ(PROPERTY_VALUE_MAX - 1, len);
         EXPECT_STREQ(maxLengthString.c_str(), mValue);
+        ResetValue();
+    }
+
+    // Try to use a default value that's the max length => get succeeds
+    {
+        ASSERT_OK(property_set(PROPERTY_TEST_KEY, ""));
+
+        std::string maxLengthString = std::string(PROPERTY_VALUE_MAX - 1, 'b');
+
+        // Expect that the value matches maxLengthString
+        int len = property_get(PROPERTY_TEST_KEY, mValue, maxLengthString.c_str());
+        EXPECT_EQ(PROPERTY_VALUE_MAX - 1, len);
+        EXPECT_STREQ(maxLengthString.c_str(), mValue);
+        ResetValue();
+    }
+
+    // Try to use a default value of length one => get succeeds
+    {
+        ASSERT_OK(property_set(PROPERTY_TEST_KEY, ""));
+
+        std::string oneCharString = std::string(1, 'c');
+
+        // Expect that the value matches oneCharString
+        int len = property_get(PROPERTY_TEST_KEY, mValue, oneCharString.c_str());
+        EXPECT_EQ(1, len);
+        EXPECT_STREQ(oneCharString.c_str(), mValue);
+        ResetValue();
+    }
+
+    // Try to use a default value of length zero => get succeeds
+    {
+        ASSERT_OK(property_set(PROPERTY_TEST_KEY, ""));
+
+        std::string zeroCharString = std::string(0, 'd');
+
+        // Expect that the value matches oneCharString
+        int len = property_get(PROPERTY_TEST_KEY, mValue, zeroCharString.c_str());
+        EXPECT_EQ(0, len);
+        EXPECT_STREQ(zeroCharString.c_str(), mValue);
+        ResetValue();
+    }
+
+    // Try to use a NULL default value => get returns 0
+    {
+        ASSERT_OK(property_set(PROPERTY_TEST_KEY, ""));
+
+        // Expect a return value of 0
+        int len = property_get(PROPERTY_TEST_KEY, mValue, NULL);
+        EXPECT_EQ(0, len);
         ResetValue();
     }
 }
@@ -177,7 +228,7 @@ TEST_F(PropertiesTest, GetBool) {
      * TRUE
      */
     const char *valuesTrue[] = { "1", "true", "y", "yes", "on", };
-    for (size_t i = 0; i < ARRAY_SIZE(valuesTrue); ++i) {
+    for (size_t i = 0; i < arraysize(valuesTrue); ++i) {
         ASSERT_OK(property_set(PROPERTY_TEST_KEY, valuesTrue[i]));
         bool val = property_get_bool(PROPERTY_TEST_KEY, /*default_value*/false);
         EXPECT_TRUE(val) << "Property should've been TRUE for value: '" << valuesTrue[i] << "'";
@@ -187,7 +238,7 @@ TEST_F(PropertiesTest, GetBool) {
      * FALSE
      */
     const char *valuesFalse[] = { "0", "false", "n", "no", "off", };
-    for (size_t i = 0; i < ARRAY_SIZE(valuesFalse); ++i) {
+    for (size_t i = 0; i < arraysize(valuesFalse); ++i) {
         ASSERT_OK(property_set(PROPERTY_TEST_KEY, valuesFalse[i]));
         bool val = property_get_bool(PROPERTY_TEST_KEY, /*default_value*/true);
         EXPECT_FALSE(val) << "Property shoud've been FALSE For string value: '" << valuesFalse[i] << "'";
@@ -200,7 +251,7 @@ TEST_F(PropertiesTest, GetBool) {
             "+1", "  1  ", "  true", "  true  ", "  y  ", "  yes", "yes  ",
             "+0", "-0", "00", "  00  ", "  false", "false  ",
     };
-    for (size_t i = 0; i < ARRAY_SIZE(valuesNeither); ++i) {
+    for (size_t i = 0; i < arraysize(valuesNeither); ++i) {
         ASSERT_OK(property_set(PROPERTY_TEST_KEY, valuesNeither[i]));
 
         // The default value should always be used
@@ -249,9 +300,9 @@ TEST_F(PropertiesTest, GetInt64) {
         DEFAULT_VALUE, DEFAULT_VALUE,
     };
 
-    ASSERT_EQ(ARRAY_SIZE(setValues), ARRAY_SIZE(getValues));
+    ASSERT_EQ(arraysize(setValues), arraysize(getValues));
 
-    for (size_t i = 0; i < ARRAY_SIZE(setValues); ++i) {
+    for (size_t i = 0; i < arraysize(setValues); ++i) {
         ASSERT_OK(property_set(PROPERTY_TEST_KEY, setValues[i]));
 
         int64_t val = property_get_int64(PROPERTY_TEST_KEY, DEFAULT_VALUE);
@@ -296,9 +347,9 @@ TEST_F(PropertiesTest, GetInt32) {
         DEFAULT_VALUE, DEFAULT_VALUE,
     };
 
-    ASSERT_EQ(ARRAY_SIZE(setValues), ARRAY_SIZE(getValues));
+    ASSERT_EQ(arraysize(setValues), arraysize(getValues));
 
-    for (size_t i = 0; i < ARRAY_SIZE(setValues); ++i) {
+    for (size_t i = 0; i < arraysize(setValues); ++i) {
         ASSERT_OK(property_set(PROPERTY_TEST_KEY, setValues[i]));
 
         int32_t val = property_get_int32(PROPERTY_TEST_KEY, DEFAULT_VALUE);

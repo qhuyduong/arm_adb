@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef HAVE_OPEN_MEMSTREAM
+#if defined(__APPLE__)
 
 /*
  * Implementation of the POSIX open_memstream() function, which Linux has
@@ -58,8 +58,6 @@
 #else
 # define DBUG(x) ((void)0)
 #endif
-
-#ifdef HAVE_FUNOPEN
 
 /*
  * Definition of a seekable, write-only memory stream.
@@ -251,12 +249,6 @@ FILE* open_memstream(char** bufp, size_t* sizep)
     return fp;
 }
 
-#else /*not HAVE_FUNOPEN*/
-FILE* open_memstream(char** bufp, size_t* sizep)
-{
-    abort();
-}
-#endif /*HAVE_FUNOPEN*/
 
 
 
@@ -378,4 +370,4 @@ DONE
 
 #endif
 
-#endif /*!HAVE_OPEN_MEMSTREAM*/
+#endif /* __APPLE__ */

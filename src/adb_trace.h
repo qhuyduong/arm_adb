@@ -17,127 +17,52 @@
 #ifndef __ADB_TRACE_H
 #define __ADB_TRACE_H
 
-#if !ADB_HOST
-#include <android/log.h>
-#endif
-
-/* define ADB_TRACE to 1 to enable tracing support, or 0 to disable it */
-#define  ADB_TRACE    1
+#include <android-base/logging.h>
+#include <android-base/stringprintf.h>
 
 /* IMPORTANT: if you change the following list, don't
  * forget to update the corresponding 'tags' table in
- * the adb_trace_init() function implemented in adb.c
+ * the adb_trace_init() function implemented in adb_trace.cpp.
  */
-typedef enum {
-    TRACE_ADB = 0,   /* 0x001 */
-    TRACE_SOCKETS,
-    TRACE_PACKETS,
-    TRACE_TRANSPORT,
-    TRACE_RWX,       /* 0x010 */
-    TRACE_USB,
-    TRACE_SYNC,
-    TRACE_SYSDEPS,
-    TRACE_JDWP,      /* 0x100 */
-    TRACE_SERVICES,
-    TRACE_AUTH,
-    TRACE_FDEVENT,
-} AdbTrace;
+enum AdbTrace {
+    ADB = 0,   /* 0x001 */
+    SOCKETS,
+    PACKETS,
+    TRANSPORT,
+    RWX,       /* 0x010 */
+    USB,
+    SYNC,
+    SYSDEPS,
+    JDWP,      /* 0x100 */
+    SERVICES,
+    AUTH,
+    FDEVENT,
+    SHELL
+};
 
-#if ADB_TRACE
+#define VLOG_IS_ON(TAG) \
+    ((adb_trace_mask & (1 << (TAG))) != 0)
 
-#if !ADB_HOST
-/*
- * When running inside the emulator, guest's adbd can connect to 'adb-debug'
- * qemud service that can display adb trace messages (on condition that emulator
- * has been started with '-debug adb' option).
- */
+#define VLOG(TAG)         \
+    if (LIKELY(!VLOG_IS_ON(TAG))) \
+        ;                 \
+    else                  \
+        LOG(INFO)
 
-/* Delivers a trace message to the emulator via QEMU pipe. */
-void adb_qemu_trace(const char* fmt, ...);
-/* Macro to use to send ADB trace messages to the emulator. */
-#define DQ(...)    adb_qemu_trace(__VA_ARGS__)
-#else
-#define DQ(...) ((void)0)
-#endif  /* !ADB_HOST */
+// You must define TRACE_TAG before using this macro.
+#define D(...) \
+    VLOG(TRACE_TAG) << android::base::StringPrintf(__VA_ARGS__)
 
-extern int     adb_trace_mask;
-extern unsigned char    adb_trace_output_count;
-void    adb_trace_init(void);
 
-#  define ADB_TRACING  ((adb_trace_mask & (1 << TRACE_TAG)) != 0)
+extern int adb_trace_mask;
+void adb_trace_init(char**);
+void adb_trace_enable(AdbTrace trace_tag);
 
-/* you must define TRACE_TAG before using this macro */
-#if ADB_HOST
-#  define  D(...)                                      \
-        do {                                           \
-            if (ADB_TRACING) {                         \
-                int save_errno = errno;                \
-                adb_mutex_lock(&D_lock);               \
-                fprintf(stderr, "%s::%s():",           \
-                        __FILE__, __FUNCTION__);       \
-                errno = save_errno;                    \
-                fprintf(stderr, __VA_ARGS__ );         \
-                fflush(stderr);                        \
-                adb_mutex_unlock(&D_lock);             \
-                errno = save_errno;                    \
-           }                                           \
-        } while (0)
-#  define  DR(...)                                     \
-        do {                                           \
-            if (ADB_TRACING) {                         \
-                int save_errno = errno;                \
-                adb_mutex_lock(&D_lock);               \
-                errno = save_errno;                    \
-                fprintf(stderr, __VA_ARGS__ );         \
-                fflush(stderr);                        \
-                adb_mutex_unlock(&D_lock);             \
-                errno = save_errno;                    \
-           }                                           \
-        } while (0)
-#  define  DD(...)                                     \
-        do {                                           \
-          int save_errno = errno;                      \
-          adb_mutex_lock(&D_lock);                     \
-          fprintf(stderr, "%s::%s():",                 \
-                  __FILE__, __FUNCTION__);             \
-          errno = save_errno;                          \
-          fprintf(stderr, __VA_ARGS__ );               \
-          fflush(stderr);                              \
-          adb_mutex_unlock(&D_lock);                   \
-          errno = save_errno;                          \
-        } while (0)
-#else
-#  define  D(...)                                      \
-        do {                                           \
-            if (ADB_TRACING) {                         \
-                __android_log_print(                   \
-                    ANDROID_LOG_INFO,                  \
-                    __FUNCTION__,                      \
-                    __VA_ARGS__ );                     \
-            }                                          \
-        } while (0)
-#  define  DR(...)                                     \
-        do {                                           \
-            if (ADB_TRACING) {                         \
-                __android_log_print(                   \
-                    ANDROID_LOG_INFO,                  \
-                    __FUNCTION__,                      \
-                    __VA_ARGS__ );                     \
-            }                                          \
-        } while (0)
-#  define  DD(...)                                     \
-        do {                                           \
-          __android_log_print(                         \
-              ANDROID_LOG_INFO,                        \
-              __FUNCTION__,                            \
-              __VA_ARGS__ );                           \
-        } while (0)
-#endif /* ADB_HOST */
-#else
-#  define  D(...)          ((void)0)
-#  define  DR(...)         ((void)0)
-#  define  DD(...)         ((void)0)
-#  define  ADB_TRACING     0
-#endif /* ADB_TRACE */
+// Include <atomic> before stdatomic.h (introduced in cutils/trace.h) to avoid compile error.
+#include <atomic>
+
+#define ATRACE_TAG ATRACE_TAG_ADB
+#include <cutils/trace.h>
+#include <utils/Trace.h>
 
 #endif /* __ADB_TRACE_H */

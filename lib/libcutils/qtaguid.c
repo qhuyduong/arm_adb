@@ -26,8 +26,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <cutils/qtaguid.h>
 #include <log/log.h>
+#include <cutils/qtaguid.h>
 
 static const char* CTRL_PROCPATH = "/proc/net/xt_qtaguid/ctrl";
 static const int CTRL_MAX_INPUT_LEN = 128;
@@ -47,10 +47,7 @@ pthread_once_t resTrackInitDone = PTHREAD_ONCE_INIT;
 
 /* Only call once per process. */
 void qtaguid_resTrack(void) {
-    resTrackFd = TEMP_FAILURE_RETRY(open("/dev/xt_qtaguid", O_RDONLY));
-    if (resTrackFd >=0) {
-        TEMP_FAILURE_RETRY(fcntl(resTrackFd, F_SETFD, FD_CLOEXEC));
-    }
+    resTrackFd = TEMP_FAILURE_RETRY(open("/dev/xt_qtaguid", O_RDONLY | O_CLOEXEC));
 }
 
 /*
@@ -63,7 +60,7 @@ static int write_ctrl(const char *cmd) {
 
     ALOGV("write_ctrl(%s)", cmd);
 
-    fd = TEMP_FAILURE_RETRY(open(CTRL_PROCPATH, O_WRONLY));
+    fd = TEMP_FAILURE_RETRY(open(CTRL_PROCPATH, O_WRONLY | O_CLOEXEC));
     if (fd < 0) {
         return -errno;
     }
@@ -75,7 +72,8 @@ static int write_ctrl(const char *cmd) {
         savedErrno = 0;
     }
     if (res < 0) {
-        ALOGI("Failed write_ctrl(%s) res=%d errno=%d", cmd, res, savedErrno);
+        // ALOGV is enough because all the callers also log failures
+        ALOGV("Failed write_ctrl(%s) res=%d errno=%d", cmd, res, savedErrno);
     }
     close(fd);
     return -savedErrno;
@@ -85,7 +83,7 @@ static int write_param(const char *param_path, const char *value) {
     int param_fd;
     int res;
 
-    param_fd = TEMP_FAILURE_RETRY(open(param_path, O_WRONLY));
+    param_fd = TEMP_FAILURE_RETRY(open(param_path, O_WRONLY | O_CLOEXEC));
     if (param_fd < 0) {
         return -errno;
     }

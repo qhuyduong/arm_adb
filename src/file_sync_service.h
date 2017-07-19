@@ -17,26 +17,15 @@
 #ifndef _FILE_SYNC_SERVICE_H_
 #define _FILE_SYNC_SERVICE_H_
 
-#ifdef HAVE_BIG_ENDIAN
-static inline unsigned __swap_uint32(unsigned x) 
-{
-    return (((x) & 0xFF000000) >> 24)
-        | (((x) & 0x00FF0000) >> 8)
-        | (((x) & 0x0000FF00) << 8)
-        | (((x) & 0x000000FF) << 24);
-}
-#define htoll(x) __swap_uint32(x)
-#define ltohl(x) __swap_uint32(x)
-#define MKID(a,b,c,d) ((d) | ((c) << 8) | ((b) << 16) | ((a) << 24))
-#else
-#define htoll(x) (x)
-#define ltohl(x) (x)
-#define MKID(a,b,c,d) ((a) | ((b) << 8) | ((c) << 16) | ((d) << 24))
-#endif
+#include <string>
+#include <vector>
 
-#define ID_STAT MKID('S','T','A','T')
+#define MKID(a,b,c,d) ((a) | ((b) << 8) | ((c) << 16) | ((d) << 24))
+
+#define ID_LSTAT_V1 MKID('S','T','A','T')
+#define ID_STAT_V2 MKID('S','T','A','2')
+#define ID_LSTAT_V2 MKID('L','S','T','2')
 #define ID_LIST MKID('L','I','S','T')
-#define ID_ULNK MKID('U','L','N','K')
 #define ID_SEND MKID('S','E','N','D')
 #define ID_RECV MKID('R','E','C','V')
 #define ID_DENT MKID('D','E','N','T')
@@ -46,41 +35,57 @@ static inline unsigned __swap_uint32(unsigned x)
 #define ID_FAIL MKID('F','A','I','L')
 #define ID_QUIT MKID('Q','U','I','T')
 
-typedef union {
-    unsigned id;
-    struct {
-        unsigned id;
-        unsigned namelen;
-    } req;
-    struct {
-        unsigned id;
-        unsigned mode;
-        unsigned size;
-        unsigned time;
-    } stat;
-    struct {
-        unsigned id;
-        unsigned mode;
-        unsigned size;
-        unsigned time;
-        unsigned namelen;
+struct SyncRequest {
+    uint32_t id;  // ID_STAT, et cetera.
+    uint32_t path_length;  // <= 1024
+    // Followed by 'path_length' bytes of path (not NUL-terminated).
+} __attribute__((packed)) ;
+
+union syncmsg {
+    struct __attribute__((packed)) {
+        uint32_t id;
+        uint32_t mode;
+        uint32_t size;
+        uint32_t time;
+    } stat_v1;
+    struct __attribute__((packed)) {
+        uint32_t id;
+        uint32_t error;
+        uint64_t dev;
+        uint64_t ino;
+        uint32_t mode;
+        uint32_t nlink;
+        uint32_t uid;
+        uint32_t gid;
+        uint64_t size;
+        int64_t atime;
+        int64_t mtime;
+        int64_t ctime;
+    } stat_v2;
+    struct __attribute__((packed)) {
+        uint32_t id;
+        uint32_t mode;
+        uint32_t size;
+        uint32_t time;
+        uint32_t namelen;
     } dent;
-    struct {
-        unsigned id;
-        unsigned size;
+    struct __attribute__((packed)) {
+        uint32_t id;
+        uint32_t size;
     } data;
-    struct {
-        unsigned id;
-        unsigned msglen;
+    struct __attribute__((packed)) {
+        uint32_t id;
+        uint32_t msglen;
     } status;
-} syncmsg;
+};
 
+void file_sync_service(int fd, void* cookie);
+bool do_sync_ls(const char* path);
+bool do_sync_push(const std::vector<const char*>& srcs, const char* dst, bool sync);
+bool do_sync_pull(const std::vector<const char*>& srcs, const char* dst,
+                  bool copy_attrs, const char* name=nullptr);
 
-void file_sync_service(int fd, void *cookie);
-int do_sync_ls(const char *path);
-int do_sync_push(const char *lpath, const char *rpath, int show_progress);
-int do_sync_sync(const char *lpath, const char *rpath, int listonly);
-int do_sync_pull(const char *rpath, const char *lpath, int show_progress, int pullTime);
+bool do_sync_sync(const std::string& lpath, const std::string& rpath, bool list_only);
 
 #define SYNC_DATA_MAX (64*1024)
 

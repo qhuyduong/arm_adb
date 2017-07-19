@@ -45,7 +45,7 @@ $ make
 
 ## Troubleshooting
 ### 1. WARNING: 'aclocal-1.xx' is missing on your system
-Run below command below configure
+Run below command before configure
 ```bash
 $ autoreconf -i --force
 ```

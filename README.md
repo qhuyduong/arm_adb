@@ -2,8 +2,18 @@
 Android's adb ported to ARM with automake source structures
 
 ## Prerequisites
+NOTE: Please make sure you are using navite/cross gcc >= 4.9
 ```bash
 $ sudo apt-get install libtool automake
+```
+For cross-compiling:
+### ARM
+```bash
+$ sudo apt-get install linux-libc-dev-armhf-cross libc6-armhf-cross libc6-dev-armhf-cross
+```
+### AARCH64
+```bash
+$ sudo apt-get install linux-libc-dev-arm64-cross libc6-arm64-cross libc6-dev-arm64-cross
 ```
 
 ## How to build and run

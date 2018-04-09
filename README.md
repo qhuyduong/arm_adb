@@ -1,6 +1,8 @@
 # arm_adb
 Android's adb ported to ARM with automake source structures
 
+[![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=Q8BH5C48PA9SC)
+
 ## Prerequisites
 NOTE: Please make sure you are using navite/cross gcc >= 4.9
 ```bash
@@ -49,3 +51,8 @@ Run below command before configure
 ```bash
 $ autoreconf -i --force
 ```
+
+## Donation
+If this project helps you reduce time to develop, you can give me a cup of coffee :)
+
+[![Paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=Q8BH5C48PA9SC)

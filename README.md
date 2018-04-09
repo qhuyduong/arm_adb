@@ -4,7 +4,7 @@ Android's adb ported to ARM with automake source structures
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=Q8BH5C48PA9SC)
 
 ## Prerequisites
-NOTE: Please make sure you are using navite/cross gcc >= 4.9
+NOTE: Please make sure you are using navite/cross gcc/g++ >= 4.9
 ```bash
 $ sudo apt-get install libtool automake
 ```

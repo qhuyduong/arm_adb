@@ -22,7 +22,7 @@ $ sudo apt-get install linux-libc-dev-arm64-cross libc6-arm64-cross libc6-dev-ar
 ### Native compiling
 #### Native-compile openssl
 ```bash
-$ git clone https://github.com/hduong85/openssl-1.0.2l.git
+$ git clone https://github.com/qhuyduong/openssl-1.0.2l.git
 $ cd openssl-1.0.2l/
 $ ./Configure --prefix=/tmp/openssl os/compiler:gcc
 $ make && make install
@@ -31,7 +31,7 @@ $ cd -
 
 #### Native-compile arm_adb
 ```bash
-$ git clone https://github.com/hduong85/arm_adb
+$ git clone https://github.com/qhuyduong/arm_adb
 $ cd arm_adb
 $ ./configure --includedir=/tmp/openssl/include --libdir=/tmp/openssl/lib
 $ make
@@ -40,7 +40,7 @@ $ make
 ### Cross-compiling
 #### Cross-compile Openssl
 ```bash
-$ git clone https://github.com/hduong85/openssl-1.0.2l.git
+$ git clone https://github.com/qhuyduong/openssl-1.0.2l.git
 $ cd openssl-1.0.2l/
 $ ./Configure --prefix=/tmp/openssl os/compiler:$TOOLCHAIN_PREFIX-gcc
 $ make && make install
@@ -49,7 +49,7 @@ $ cd -
 
 #### Cross-compile arm_adb
 ```bash
-$ git clone https://github.com/hduong85/arm_adb
+$ git clone https://github.com/qhuyduong/arm_adb
 $ cd arm_adb
 $ ./configure --host=$TOOLCHAIN_PREFIX --includedir=/tmp/openssl/include --libdir=/tmp/openssl/lib
 $ make

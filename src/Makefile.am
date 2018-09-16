@@ -1,12 +1,12 @@
 bin_PROGRAMS = adb
-adb_SOURCES = adb.cpp adb_auth_host.cpp adb_client.cpp adb_io.cpp \
-	      adb_listeners.cpp adb_trace.cpp adb_utils.cpp bugreport.cpp \
-	      client/main.cpp client/usb_dispatch.cpp client/usb_linux.cpp \
-	      commandline.cpp console.cpp diagnose_usb.cpp fdevent.cpp \
-	      file_sync_client.cpp line_printer.cpp shell_service_protocol.cpp \
-	      services.cpp sockets.cpp socket_spec.cpp sysdeps_unix.cpp \
-	      sysdeps/errno.cpp sysdeps/posix/network.cpp transport.cpp \
-	      transport_local.cpp transport_usb.cpp
+adb_SOURCES = adb.cpp adb_io.cpp adb_listeners.cpp adb_trace.cpp adb_unique_fd.cpp \
+							adb_utils.cpp client/bugreport.cpp client/adb_client.cpp client/auth.cpp \
+							client/adb_install.cpp client/main.cpp client/usb_dispatch.cpp client/usb_linux.cpp \
+							client/commandline.cpp client/console.cpp client/fastdeploy.cpp client/fastdeploycallbacks.cpp \
+							diagnose_usb.cpp fdevent.cpp client/file_sync_client.cpp client/line_printer.cpp \
+							shell_service_protocol.cpp services.cpp sockets.cpp socket_spec.cpp \
+							sysdeps_unix.cpp sysdeps/errno.cpp sysdeps/posix/network.cpp transport.cpp \
+	      			transport_local.cpp transport_usb.cpp
 adb_CXXFLAGS = -I$(includedir) -I$(top_srcdir)/include \
 	       -I$(top_srcdir)/lib/base/include \
 				 -I$(top_srcdir)/lib/libbuildversion/include \

@@ -31,40 +31,13 @@
 
 // Include this before open/close/unlink are defined as macros below.
 #include <android-base/errors.h>
+#include <android-base/macros.h>
 #include <android-base/unique_fd.h>
 #include <android-base/utf8.h>
 
 #include "sysdeps/errno.h"
 #include "sysdeps/network.h"
 #include "sysdeps/stat.h"
-
-/*
- * TEMP_FAILURE_RETRY is defined by some, but not all, versions of
- * <unistd.h>. (Alas, it is not as standard as we'd hoped!) So, if it's
- * not already defined, then define it here.
- */
-#ifndef TEMP_FAILURE_RETRY
-/* Used to retry syscalls that can return EINTR. */
-#define TEMP_FAILURE_RETRY(exp) ({         \
-    typeof (exp) _rc;                      \
-    do {                                   \
-        _rc = (exp);                       \
-    } while (_rc == -1 && errno == EINTR); \
-    _rc; })
-#endif
-
-// Some printf-like functions are implemented in terms of
-// android::base::StringAppendV, so they should use the same attribute for
-// compile-time format string checking. On Windows, if the mingw version of
-// vsnprintf is used in StringAppendV, use `gnu_printf' which allows z in %zd
-// and PRIu64 (and related) to be recognized by the compile-time checking.
-#define ADB_FORMAT_ARCHETYPE __printf__
-#ifdef __USE_MINGW_ANSI_STDIO
-#if __USE_MINGW_ANSI_STDIO
-#undef ADB_FORMAT_ARCHETYPE
-#define ADB_FORMAT_ARCHETYPE gnu_printf
-#endif
-#endif
 
 #ifdef _WIN32
 
@@ -99,17 +72,7 @@ static __inline__ bool adb_is_separator(char c) {
     return c == '\\' || c == '/';
 }
 
-static __inline__ int adb_thread_setname(const std::string& name) {
-    // TODO: See https://msdn.microsoft.com/en-us/library/xcb2z8hs.aspx for how to set
-    // the thread name in Windows. Unfortunately, it only works during debugging, but
-    // our build process doesn't generate PDB files needed for debugging.
-    return 0;
-}
-
-static __inline__  unsigned long adb_thread_id()
-{
-    return GetCurrentThreadId();
-}
+extern int adb_thread_setname(const std::string& name);
 
 static __inline__ void  close_on_exec(int  fd)
 {
@@ -125,14 +88,14 @@ extern int adb_mkdir(const std::string& path, int mode);
 #define  mkdir  ___xxx_mkdir
 
 // See the comments for the !defined(_WIN32) versions of adb_*().
-extern int  adb_open(const char*  path, int  options);
-extern int  adb_creat(const char*  path, int  mode);
-extern int  adb_read(int  fd, void* buf, int len);
-extern int  adb_write(int  fd, const void*  buf, int  len);
-extern int  adb_lseek(int  fd, int  pos, int  where);
-extern int  adb_shutdown(int  fd);
-extern int  adb_close(int  fd);
-extern int  adb_register_socket(SOCKET s);
+extern int adb_open(const char* path, int options);
+extern int adb_creat(const char* path, int mode);
+extern int adb_read(int fd, void* buf, int len);
+extern int adb_write(int fd, const void* buf, int len);
+extern int adb_lseek(int fd, int pos, int where);
+extern int adb_shutdown(int fd, int direction = SHUT_RDWR);
+extern int adb_close(int fd);
+extern int adb_register_socket(SOCKET s);
 
 // See the comments for the !defined(_WIN32) version of unix_close().
 static __inline__ int  unix_close(int fd)
@@ -160,6 +123,13 @@ static __inline__  int  unix_write(int  fd, const void*  buf, size_t  len)
 }
 #undef   write
 #define  write  ___xxx_write
+
+// See the comments for the !defined(_WIN32) version of unix_lseek().
+static __inline__ int unix_lseek(int fd, int pos, int where) {
+    return lseek(fd, pos, where);
+}
+#undef lseek
+#define lseek ___xxx_lseek
 
 // See the comments for the !defined(_WIN32) version of adb_open_mode().
 static __inline__ int  adb_open_mode(const char* path, int options, int mode)
@@ -231,14 +201,12 @@ extern int adb_closedir(DIR* dir);
 extern int adb_utime(const char *, struct utimbuf *);
 extern int adb_chmod(const char *, int);
 
-extern int adb_vfprintf(FILE *stream, const char *format, va_list ap)
-    __attribute__((__format__(ADB_FORMAT_ARCHETYPE, 2, 0)));
-extern int adb_vprintf(const char *format, va_list ap)
-    __attribute__((__format__(ADB_FORMAT_ARCHETYPE, 1, 0)));
-extern int adb_fprintf(FILE *stream, const char *format, ...)
-    __attribute__((__format__(ADB_FORMAT_ARCHETYPE, 2, 3)));
-extern int adb_printf(const char *format, ...)
-    __attribute__((__format__(ADB_FORMAT_ARCHETYPE, 1, 2)));
+extern int adb_vfprintf(FILE* stream, const char* format, va_list ap)
+        __attribute__((__format__(__printf__, 2, 0)));
+extern int adb_vprintf(const char* format, va_list ap) __attribute__((__format__(__printf__, 1, 0)));
+extern int adb_fprintf(FILE* stream, const char* format, ...)
+        __attribute__((__format__(__printf__, 2, 3)));
+extern int adb_printf(const char* format, ...) __attribute__((__format__(__printf__, 1, 2)));
 
 extern int adb_fputs(const char* buf, FILE* stream);
 extern int adb_fputc(int ch, FILE* stream);
@@ -348,7 +316,6 @@ size_t ParseCompleteUTF8(const char* first, const char* last, std::vector<char>*
 #else /* !_WIN32 a.k.a. Unix */
 
 #include <cutils/sockets.h>
-#include <cutils/threads.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -433,14 +400,10 @@ static __inline__ int  adb_open( const char*  pathname, int  options )
 #undef   open
 #define  open    ___xxx_open
 
-static __inline__ int  adb_shutdown(int fd)
-{
-    return shutdown(fd, SHUT_RDWR);
-}
-static __inline__ int  adb_shutdown(int fd, int direction)
-{
+static __inline__ int adb_shutdown(int fd, int direction = SHUT_RDWR) {
     return shutdown(fd, direction);
 }
+
 #undef   shutdown
 #define  shutdown   ____xxx_shutdown
 
@@ -532,21 +495,7 @@ inline int network_local_server(const char* name, int namespace_id, int type, st
     return _fd_set_error_str(socket_local_server(name, namespace_id, type), error);
 }
 
-inline int network_connect(const std::string& host, int port, int type,
-                           int timeout, std::string* error) {
-  int getaddrinfo_error = 0;
-  int fd = socket_network_client_timeout(host.c_str(), port, type, timeout,
-                                         &getaddrinfo_error);
-  if (fd != -1) {
-    return fd;
-  }
-  if (getaddrinfo_error != 0) {
-    *error = gai_strerror(getaddrinfo_error);
-  } else {
-    *error = strerror(errno);
-  }
-  return -1;
-}
+int network_connect(const std::string& host, int port, int type, int timeout, std::string* error);
 
 static __inline__ int  adb_socket_accept(int  serverfd, struct sockaddr*  addr, socklen_t  *addrlen)
 {
@@ -576,24 +525,19 @@ inline int adb_socket_get_local_port(int fd) {
 // via _setmode()).
 #define  unix_read   adb_read
 #define  unix_write  adb_write
+#define unix_lseek adb_lseek
 #define  unix_close  adb_close
 
 static __inline__ int adb_thread_setname(const std::string& name) {
 #ifdef __APPLE__
     return pthread_setname_np(name.c_str());
 #else
-    const char *s = name.c_str();
-
-    // pthread_setname_np fails rather than truncating long strings.
-    const int max_task_comm_len = 16; // including the null terminator
-    if (name.length() > (max_task_comm_len - 1)) {
-        char buf[max_task_comm_len];
-        strncpy(buf, name.c_str(), sizeof(buf) - 1);
-        buf[sizeof(buf) - 1] = '\0';
-        s = buf;
-    }
-
-    return pthread_setname_np(pthread_self(), s) ;
+    // Both bionic and glibc's pthread_setname_np fails rather than truncating long strings.
+    // glibc doesn't have strlcpy, so we have to fake it.
+    char buf[16];  // MAX_TASK_COMM_LEN, but that's not exported by the kernel headers.
+    strncpy(buf, name.c_str(), sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    return pthread_setname_np(pthread_self(), buf);
 #endif
 }
 
@@ -643,11 +587,6 @@ static __inline__ int  adb_mkdir(const std::string& path, int mode)
 
 static __inline__ int adb_is_absolute_host_path(const char* path) {
     return path[0] == '/';
-}
-
-static __inline__ unsigned long adb_thread_id()
-{
-    return (unsigned long)gettid();
 }
 
 #endif /* !_WIN32 */

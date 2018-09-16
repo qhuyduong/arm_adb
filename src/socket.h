@@ -19,84 +19,80 @@
 
 #include <stddef.h>
 
-#include "fdevent.h"
+#include <deque>
+#include <memory>
+#include <string>
 
-struct apacket;
+#include "fdevent.h"
+#include "types.h"
+
 class atransport;
 
 /* An asocket represents one half of a connection between a local and
-** remote entity.  A local asocket is bound to a file descriptor.  A
-** remote asocket is bound to the protocol engine.
-*/
+ * remote entity.  A local asocket is bound to a file descriptor.  A
+ * remote asocket is bound to the protocol engine.
+ */
 struct asocket {
-        /* chain pointers for the local/remote list of
-        ** asockets that this asocket lives in
-        */
-    asocket *next;
-    asocket *prev;
+    /* the unique identifier for this asocket
+     */
+    unsigned id = 0;
 
-        /* the unique identifier for this asocket
-        */
-    unsigned id;
-
-        /* flag: set when the socket's peer has closed
-        ** but packets are still queued for delivery
-        */
-    int    closing;
+    /* flag: set when the socket's peer has closed
+     * but packets are still queued for delivery
+     */
+    int closing = 0;
 
     // flag: set when the socket failed to write, so the socket will not wait to
     // write packets and close directly.
-    bool has_write_error;
+    bool has_write_error = 0;
 
-        /* flag: quit adbd when both ends close the
-        ** local service socket
-        */
-    int    exit_on_close;
+    /* flag: quit adbd when both ends close the
+     * local service socket
+     */
+    int exit_on_close = 0;
 
-        /* the asocket we are connected to
-        */
+    // the asocket we are connected to
+    asocket* peer = nullptr;
 
-    asocket *peer;
+    /* For local asockets, the fde is used to bind
+     * us to our fd event system.  For remote asockets
+     * these fields are not used.
+     */
+    fdevent* fde = nullptr;
+    int fd = -1;
 
-        /* For local asockets, the fde is used to bind
-        ** us to our fd event system.  For remote asockets
-        ** these fields are not used.
-        */
-    fdevent fde;
-    int fd;
+    // queue of data waiting to be written
+    IOVector packet_queue;
 
-        /* queue of apackets waiting to be written
-        */
-    apacket *pkt_first;
-    apacket *pkt_last;
+    std::string smart_socket_data;
 
-        /* enqueue is called by our peer when it has data
-        ** for us.  It should return 0 if we can accept more
-        ** data or 1 if not.  If we return 1, we must call
-        ** peer->ready() when we once again are ready to
-        ** receive data.
-        */
-    int (*enqueue)(asocket *s, apacket *pkt);
+    /* enqueue is called by our peer when it has data
+     * for us.  It should return 0 if we can accept more
+     * data or 1 if not.  If we return 1, we must call
+     * peer->ready() when we once again are ready to
+     * receive data.
+     */
+    int (*enqueue)(asocket* s, apacket::payload_type data) = nullptr;
 
-        /* ready is called by the peer when it is ready for
-        ** us to send data via enqueue again
-        */
-    void (*ready)(asocket *s);
+    /* ready is called by the peer when it is ready for
+     * us to send data via enqueue again
+     */
+    void (*ready)(asocket* s) = nullptr;
 
-        /* shutdown is called by the peer before it goes away.
-        ** the socket should not do any further calls on its peer.
-        ** Always followed by a call to close. Optional, i.e. can be NULL.
-        */
-    void (*shutdown)(asocket *s);
+    /* shutdown is called by the peer before it goes away.
+     * the socket should not do any further calls on its peer.
+     * Always followed by a call to close. Optional, i.e. can be NULL.
+     */
+    void (*shutdown)(asocket* s) = nullptr;
 
-        /* close is called by the peer when it has gone away.
-        ** we are not allowed to make any further calls on the
-        ** peer once our close method is called.
-        */
-    void (*close)(asocket *s);
+    /* close is called by the peer when it has gone away.
+     * we are not allowed to make any further calls on the
+     * peer once our close method is called.
+     */
+    void (*close)(asocket* s) = nullptr;
 
-        /* A socket is bound to atransport */
-    atransport *transport;
+    /* A socket is bound to atransport */
+    atransport* transport = nullptr;
 
     size_t get_max_payload() const;
 };
@@ -107,8 +103,7 @@ void remove_socket(asocket *s);
 void close_all_sockets(atransport *t);
 
 asocket *create_local_socket(int fd);
-asocket *create_local_service_socket(const char* destination,
-                                     const atransport* transport);
+asocket* create_local_service_socket(const char* destination, atransport* transport);
 
 asocket *create_remote_socket(unsigned id, atransport *t);
 void connect_to_remote(asocket *s, const char *destination);

@@ -19,9 +19,11 @@
 #include "sysdeps.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -32,7 +34,6 @@
 
 #include <android-base/file.h>
 #include <android-base/logging.h>
-#include <android-base/quick_exit.h>
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
 
@@ -40,8 +41,6 @@
 #include "adb_utils.h"
 #include "transport.h"
 #include "usb.h"
-
-using namespace std::literals;
 
 using android::base::StringPrintf;
 
@@ -222,7 +221,7 @@ static void process_device(libusb_device* device) {
 
     // Use size_t for interface_num so <iostream>s don't mangle it.
     size_t interface_num;
-    uint16_t zero_mask;
+    uint16_t zero_mask = 0;
     uint8_t bulk_in = 0, bulk_out = 0;
     size_t packet_size = 0;
     bool found_adb = false;
@@ -333,6 +332,13 @@ static void process_device(libusb_device* device) {
             return;
         }
 
+        rc = libusb_set_interface_alt_setting(handle.get(), interface_num, 0);
+        if (rc != 0) {
+            LOG(WARNING) << "failed to set interface alt setting for device '" << device_serial
+                         << "'" << libusb_error_name(rc);
+            return;
+        }
+
         for (uint8_t endpoint : {bulk_in, bulk_out}) {
             rc = libusb_clear_halt(handle.get(), endpoint);
             if (rc != 0) {
@@ -365,9 +371,9 @@ static void process_device(libusb_device* device) {
 #endif
     }
 
-    auto result =
-        std::make_unique<usb_handle>(device_address, device_serial, std::move(handle),
-                                     interface_num, bulk_in, bulk_out, zero_mask, packet_size);
+    std::unique_ptr<usb_handle> result(new usb_handle(device_address, device_serial,
+                                                      std::move(handle), interface_num, bulk_in,
+                                                      bulk_out, zero_mask, packet_size));
     usb_handle* usb_handle_raw = result.get();
 
     {
@@ -390,7 +396,7 @@ static void device_connected(libusb_device* device) {
     // hack around this by inserting a sleep.
     auto thread = std::thread([device]() {
         std::string device_path = get_device_dev_path(device);
-        std::this_thread::sleep_for(1s);
+        std::this_thread::sleep_for(std::chrono::seconds(1));
 
         process_device(device);
         if (--connecting_devices == 0) {
@@ -412,8 +418,13 @@ static void device_disconnected(libusb_device* device) {
     if (it != usb_handles.end()) {
         if (!it->second->device_handle) {
             // If the handle is null, we were never able to open the device.
-            unregister_usb_transport(it->second.get());
+
+            // Temporarily release the usb handles mutex to avoid deadlock.
+            std::unique_ptr<usb_handle> handle = std::move(it->second);
             usb_handles.erase(it);
+            lock.unlock();
+            unregister_usb_transport(handle.get());
+            lock.lock();
         } else {
             // Closure of the transport will erase the usb_handle.
         }
@@ -436,8 +447,8 @@ static void hotplug_thread() {
     }
 }
 
-static int hotplug_callback(libusb_context*, libusb_device* device, libusb_hotplug_event event,
-                            void*) {
+static LIBUSB_CALL int hotplug_callback(libusb_context*, libusb_device* device,
+                                        libusb_hotplug_event event, void*) {
     // We're called with the libusb lock taken. Call these on a separate thread outside of this
     // function so that the usb_handle mutex is always taken before the libusb mutex.
     static std::once_flag once;
@@ -481,59 +492,60 @@ void usb_cleanup() {
     libusb_hotplug_deregister_callback(nullptr, hotplug_handle);
 }
 
+static LIBUSB_CALL void transfer_callback(libusb_transfer* transfer) {
+    transfer_info* info = static_cast<transfer_info*>(transfer->user_data);
+
+    LOG(DEBUG) << info->name << " transfer callback entered";
+
+    // Make sure that the original submitter has made it to the condition_variable wait.
+    std::unique_lock<std::mutex> lock(info->mutex);
+
+    LOG(DEBUG) << info->name << " callback successfully acquired lock";
+
+    if (transfer->status != LIBUSB_TRANSFER_COMPLETED) {
+        LOG(WARNING) << info->name << " transfer failed: " << libusb_error_name(transfer->status);
+        info->Notify();
+        return;
+    }
+
+    // usb_read() can return when receiving some data.
+    if (info->is_bulk_out && transfer->actual_length != transfer->length) {
+        LOG(DEBUG) << info->name << " transfer incomplete, resubmitting";
+        transfer->length -= transfer->actual_length;
+        transfer->buffer += transfer->actual_length;
+        int rc = libusb_submit_transfer(transfer);
+        if (rc != 0) {
+            LOG(WARNING) << "failed to submit " << info->name
+                         << " transfer: " << libusb_error_name(rc);
+            transfer->status = LIBUSB_TRANSFER_ERROR;
+            info->Notify();
+        }
+        return;
+    }
+
+    if (should_perform_zero_transfer(transfer->endpoint, transfer->length, info->zero_mask)) {
+        LOG(DEBUG) << "submitting zero-length write";
+        transfer->length = 0;
+        int rc = libusb_submit_transfer(transfer);
+        if (rc != 0) {
+            LOG(WARNING) << "failed to submit zero-length write: " << libusb_error_name(rc);
+            transfer->status = LIBUSB_TRANSFER_ERROR;
+            info->Notify();
+        }
+        return;
+    }
+
+    LOG(VERBOSE) << info->name << "transfer fully complete";
+    info->Notify();
+}
+
 // Dispatch a libusb transfer, unlock |device_lock|, and then wait for the result.
 static int perform_usb_transfer(usb_handle* h, transfer_info* info,
                                 std::unique_lock<std::mutex> device_lock) {
     libusb_transfer* transfer = info->transfer;
 
     transfer->user_data = info;
-    transfer->callback = [](libusb_transfer* transfer) {
-        transfer_info* info = static_cast<transfer_info*>(transfer->user_data);
-
-        LOG(DEBUG) << info->name << " transfer callback entered";
-
-        // Make sure that the original submitter has made it to the condition_variable wait.
-        std::unique_lock<std::mutex> lock(info->mutex);
-
-        LOG(DEBUG) << info->name << " callback successfully acquired lock";
-
-        if (transfer->status != LIBUSB_TRANSFER_COMPLETED) {
-            LOG(WARNING) << info->name
-                         << " transfer failed: " << libusb_error_name(transfer->status);
-            info->Notify();
-            return;
-        }
-
-        // usb_read() can return when receiving some data.
-        if (info->is_bulk_out && transfer->actual_length != transfer->length) {
-            LOG(DEBUG) << info->name << " transfer incomplete, resubmitting";
-            transfer->length -= transfer->actual_length;
-            transfer->buffer += transfer->actual_length;
-            int rc = libusb_submit_transfer(transfer);
-            if (rc != 0) {
-                LOG(WARNING) << "failed to submit " << info->name
-                             << " transfer: " << libusb_error_name(rc);
-                transfer->status = LIBUSB_TRANSFER_ERROR;
-                info->Notify();
-            }
-            return;
-        }
-
-        if (should_perform_zero_transfer(transfer->endpoint, transfer->length, info->zero_mask)) {
-            LOG(DEBUG) << "submitting zero-length write";
-            transfer->length = 0;
-            int rc = libusb_submit_transfer(transfer);
-            if (rc != 0) {
-                LOG(WARNING) << "failed to submit zero-length write: " << libusb_error_name(rc);
-                transfer->status = LIBUSB_TRANSFER_ERROR;
-                info->Notify();
-            }
-            return;
-        }
-
-        LOG(VERBOSE) << info->name << "transfer fully complete";
-        info->Notify();
-    };
+    transfer->callback = transfer_callback;
 
     LOG(DEBUG) << "locking " << info->name << " transfer_info mutex";
     std::unique_lock<std::mutex> lock(info->mutex);
@@ -577,7 +589,7 @@ int usb_write(usb_handle* h, const void* d, int len) {
 
     int rc = perform_usb_transfer(h, info, std::move(lock));
     LOG(DEBUG) << "usb_write(" << len << ") = " << rc;
-    return rc;
+    return info->transfer->actual_length;
 }
 
 int usb_read(usb_handle* h, void* d, int len) {

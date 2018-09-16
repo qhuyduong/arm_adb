@@ -49,9 +49,9 @@
 
 
 #if defined(_WIN32)
-constexpr char kNullFileName[] = "NUL";
+static constexpr char kNullFileName[] = "NUL";
 #else
-constexpr char kNullFileName[] = "/dev/null";
+static constexpr char kNullFileName[] = "/dev/null";
 #endif
 
 void close_stdin() {
@@ -79,22 +79,24 @@ bool directory_exists(const std::string& path) {
 }
 
 std::string escape_arg(const std::string& s) {
-  std::string result = s;
-
   // Escape any ' in the string (before we single-quote the whole thing).
   // The correct way to do this for the shell is to replace ' with '\'' --- that is,
   // close the existing single-quoted string, escape a single single-quote, and start
   // a new single-quoted string. Like the C preprocessor, the shell will concatenate
   // these pieces into one string.
-  for (size_t i = 0; i < s.size(); ++i) {
-    if (s[i] == '\'') {
-      result.insert(i, "'\\'");
-      i += 2;
-    }
+
+  std::string result;
+  result.push_back('\'');
+
+  size_t base = 0;
+  while (true) {
+    size_t found = s.find('\'', base);
+    result.append(s, base, found - base);
+    if (found == s.npos) break;
+    result.append("'\\''");
+    base = found + 1;
   }
 
-  // Prefix and suffix the whole string with '.
-  result.insert(result.begin(), '\'');
   result.push_back('\'');
   return result;
 }
@@ -270,10 +272,6 @@ std::string adb_get_android_dir_path() {
         }
     }
     return android_dir;
-}
-
-void AdbCloser::Close(int fd) {
-    adb_close(fd);
 }
 
 int syntax_error(const char* fmt, ...) {

@@ -20,17 +20,23 @@
 #include <sys/types.h>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <deque>
 #include <functional>
 #include <list>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_set>
 
-#include "adb.h"
-
+#include <android-base/macros.h>
+#include <android-base/thread_annotations.h>
 #include <openssl/rsa.h>
+
+#include "adb.h"
+#include "adb_unique_fd.h"
 
 typedef std::unordered_set<std::string> FeatureSet;
 
@@ -54,82 +60,207 @@ extern const char* const kFeatureLibusb;
 // The server supports `push --sync`.
 extern const char* const kFeaturePushSync;
 
+TransportId NextTransportId();
+
+// Abstraction for a non-blocking packet transport.
+struct Connection {
+    Connection() = default;
+    virtual ~Connection() = default;
+
+    void SetTransportName(std::string transport_name) {
+        transport_name_ = std::move(transport_name);
+    }
+
+    using ReadCallback = std::function<bool(Connection*, std::unique_ptr<apacket>)>;
+    void SetReadCallback(ReadCallback callback) {
+        CHECK(!read_callback_);
+        read_callback_ = callback;
+    }
+
+    // Called after the Connection has terminated, either by an error or because Stop was called.
+    using ErrorCallback = std::function<void(Connection*, const std::string&)>;
+    void SetErrorCallback(ErrorCallback callback) {
+        CHECK(!error_callback_);
+        error_callback_ = callback;
+    }
+
+    virtual bool Write(std::unique_ptr<apacket> packet) = 0;
+
+    virtual void Start() = 0;
+    virtual void Stop() = 0;
+
+    std::string transport_name_;
+    ReadCallback read_callback_;
+    ErrorCallback error_callback_;
+
+    static std::unique_ptr<Connection> FromFd(unique_fd fd);
+};
+
+// Abstraction for a blocking packet transport.
+struct BlockingConnection {
+    BlockingConnection() = default;
+    BlockingConnection(const BlockingConnection& copy) = delete;
+    BlockingConnection(BlockingConnection&& move) = delete;
+
+    // Destroy a BlockingConnection. Formerly known as 'Close' in atransport.
+    virtual ~BlockingConnection() = default;
+
+    // Read/Write a packet. These functions are concurrently called from a transport's reader/writer
+    // threads.
+    virtual bool Read(apacket* packet) = 0;
+    virtual bool Write(apacket* packet) = 0;
+
+    // Terminate a connection.
+    // This method must be thread-safe, and must cause concurrent Reads/Writes to terminate.
+    // Formerly known as 'Kick' in atransport.
+    virtual void Close() = 0;
+};
+
+struct BlockingConnectionAdapter : public Connection {
+    explicit BlockingConnectionAdapter(std::unique_ptr<BlockingConnection> connection);
+
+    virtual ~BlockingConnectionAdapter();
+
+    virtual bool Write(std::unique_ptr<apacket> packet) override final;
+
+    virtual void Start() override final;
+    virtual void Stop() override final;
+
+    bool started_ GUARDED_BY(mutex_) = false;
+    bool stopped_ GUARDED_BY(mutex_) = false;
+
+    std::unique_ptr<BlockingConnection> underlying_;
+    std::thread read_thread_ GUARDED_BY(mutex_);
+    std::thread write_thread_ GUARDED_BY(mutex_);
+
+    std::deque<std::unique_ptr<apacket>> write_queue_ GUARDED_BY(mutex_);
+    std::mutex mutex_;
+    std::condition_variable cv_;
+
+    std::once_flag error_flag_;
+};
+
+struct FdConnection : public BlockingConnection {
+    explicit FdConnection(unique_fd fd) : fd_(std::move(fd)) {}
+
+    bool Read(apacket* packet) override final;
+    bool Write(apacket* packet) override final;
+
+    void Close() override;
+
+  private:
+    unique_fd fd_;
+};
+
+struct UsbConnection : public BlockingConnection {
+    explicit UsbConnection(usb_handle* handle) : handle_(handle) {}
+    ~UsbConnection();
+
+    bool Read(apacket* packet) override final;
+    bool Write(apacket* packet) override final;
+
+    void Close() override final;
+
+    usb_handle* handle_;
+};
+
+// Waits for a transport's connection to be not pending. This is a separate
+// object so that the transport can be destroyed and another thread can be
+// notified of it in a race-free way.
+class ConnectionWaitable {
+  public:
+    ConnectionWaitable() = default;
+    ~ConnectionWaitable() = default;
+
+    // Waits until the first CNXN packet has been received by the owning
+    // atransport, or the specified timeout has elapsed. Can be called from any
+    // thread.
+    //
+    // Returns true if the CNXN packet was received in a timely fashion, false
+    // otherwise.
+    bool WaitForConnection(std::chrono::milliseconds timeout);
+
+    // Can be called from any thread when the connection stops being pending.
+    // Only the first invocation will be acknowledged, the rest will be no-ops.
+    void SetConnectionEstablished(bool success);
+
+  private:
+    bool connection_established_ GUARDED_BY(mutex_) = false;
+    bool connection_established_ready_ GUARDED_BY(mutex_) = false;
+    std::mutex mutex_;
+    std::condition_variable cv_;
+
+    DISALLOW_COPY_AND_ASSIGN(ConnectionWaitable);
+};
+
+enum class ReconnectResult {
+    Retry,
+    Success,
+    Abort,
+};
+
 class atransport {
-public:
+  public:
     // TODO(danalbert): We expose waaaaaaay too much stuff because this was
     // historically just a struct, but making the whole thing a more idiomatic
     // class in one go is a very large change. Given how bad our testing is,
     // it's better to do this piece by piece.
 
-    atransport(ConnectionState state = kCsOffline) : ref_count(0), connection_state_(state) {
-        transport_fde = {};
-        protocol_version = A_VERSION;
+    using ReconnectCallback = std::function<ReconnectResult(atransport*)>;
+
+    atransport(ReconnectCallback reconnect, ConnectionState state)
+        : id(NextTransportId()),
+          kicked_(false),
+          connection_state_(state),
+          connection_waitable_(std::make_shared<ConnectionWaitable>()),
+          connection_(nullptr),
+          reconnect_(std::move(reconnect)) {
+        // Initialize protocol to min version for compatibility with older versions.
+        // Version will be updated post-connect.
+        protocol_version = A_VERSION_MIN;
         max_payload = MAX_PAYLOAD;
     }
-    virtual ~atransport() {}
+    atransport(ConnectionState state = kCsOffline)
+        : atransport([](atransport*) { return ReconnectResult::Abort; }, state) {}
+    virtual ~atransport();
 
-    int (*read_from_remote)(apacket* p, atransport* t) = nullptr;
-    void (*close)(atransport* t) = nullptr;
-
-    void SetWriteFunction(int (*write_func)(apacket*, atransport*)) { write_func_ = write_func; }
-    void SetKickFunction(void (*kick_func)(atransport*)) {
-        kick_func_ = kick_func;
-    }
-    bool IsKicked() {
-        return kicked_;
-    }
     int Write(apacket* p);
     void Kick();
+    bool kicked() const { return kicked_; }
 
     // ConnectionState can be read by all threads, but can only be written in the main thread.
     ConnectionState GetConnectionState() const;
     void SetConnectionState(ConnectionState state);
 
-    int fd = -1;
-    int transport_socket = -1;
-    fdevent transport_fde;
-    std::atomic<size_t> ref_count;
-    uint32_t sync_token = 0;
+    void SetConnection(std::unique_ptr<Connection> connection);
+    std::shared_ptr<Connection> connection() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return connection_;
+    }
+
+    const TransportId id;
+    size_t ref_count = 0;
     bool online = false;
     TransportType type = kTransportAny;
 
-    // USB handle or socket fd as needed.
-    usb_handle* usb = nullptr;
-    int sfd = -1;
-
     // Used to identify transports for clients.
-    char* serial = nullptr;
-    char* product = nullptr;
-    char* model = nullptr;
-    char* device = nullptr;
-    char* devpath = nullptr;
-    void SetLocalPortForEmulator(int port) {
-        CHECK_EQ(local_port_for_emulator_, -1);
-        local_port_for_emulator_ = port;
-    }
+    std::string serial;
+    std::string product;
+    std::string model;
+    std::string device;
+    std::string devpath;
 
-    bool GetLocalPortForEmulator(int* port) const {
-        if (type == kTransportLocal && local_port_for_emulator_ != -1) {
-            *port = local_port_for_emulator_;
-            return true;
-        }
-        return false;
-    }
-
-    bool IsTcpDevice() const {
-        return type == kTransportLocal && local_port_for_emulator_ == -1;
-    }
+    bool IsTcpDevice() const { return type == kTransportLocal; }
 
 #if ADB_HOST
     std::shared_ptr<RSA> NextKey();
-    bool SetSendConnectOnError();
 #endif
 
     char token[TOKEN_SIZE] = {};
     size_t failed_auth_attempts = 0;
 
-    const std::string serial_name() const { return serial ? serial : "<unknown>"; }
-    const std::string connection_state_name() const;
+    std::string serial_name() const { return !serial.empty() ? serial : "<unknown>"; }
+    std::string connection_state_name() const;
 
     void update_version(int version, size_t payload);
     int get_protocol_version() const;
@@ -163,11 +294,18 @@ public:
     // This is to make it easier to use the same network target for both fastboot and adb.
     bool MatchesTarget(const std::string& target) const;
 
-private:
-    int local_port_for_emulator_ = -1;
-    bool kicked_ = false;
-    void (*kick_func_)(atransport*) = nullptr;
-    int (*write_func_)(apacket*, atransport*) = nullptr;
+    // Notifies that the atransport is no longer waiting for the connection
+    // being established.
+    void SetConnectionEstablished(bool success);
+
+    // Gets a shared reference to the ConnectionWaitable.
+    std::shared_ptr<ConnectionWaitable> connection_waitable() { return connection_waitable_; }
+
+    // Attempts to reconnect with the underlying Connection.
+    ReconnectResult Reconnect();
+
+  private:
+    std::atomic<bool> kicked_;
 
     // A set of features transmitted in the banner with the initial connection.
     // This is stored in the banner as 'features=feature0,feature1,etc'.
@@ -181,9 +319,19 @@ private:
     std::atomic<ConnectionState> connection_state_;
 #if ADB_HOST
     std::deque<std::shared_ptr<RSA>> keys_;
-    std::mutex write_msg_lock_;
-    bool has_send_connect_on_error_ = false;
 #endif
+
+    // A sharable object that can be used to wait for the atransport's
+    // connection to be established.
+    std::shared_ptr<ConnectionWaitable> connection_waitable_;
+
+    // The underlying connection object.
+    std::shared_ptr<Connection> connection_ GUARDED_BY(mutex_);
+
+    // A callback that will be invoked when the atransport needs to reconnect.
+    ReconnectCallback reconnect_;
+
+    std::mutex mutex_;
 
     DISALLOW_COPY_AND_ASSIGN(atransport);
 };
@@ -191,12 +339,14 @@ private:
 /*
  * Obtain a transport from the available transports.
  * If serial is non-null then only the device with that serial will be chosen.
+ * If transport_id is non-zero then only the device with that transport ID will be chosen.
  * If multiple devices/emulators would match, *is_ambiguous (if non-null)
  * is set to true and nullptr returned.
  * If no suitable transport is found, error is set and nullptr returned.
  */
-atransport* acquire_one_transport(TransportType type, const char* serial, bool* is_ambiguous,
-                                  std::string* error_out, bool accept_any_state = false);
+atransport* acquire_one_transport(TransportType type, const char* serial, TransportId transport_id,
+                                  bool* is_ambiguous, std::string* error_out,
+                                  bool accept_any_state = false);
 void kick_transport(atransport* t);
 void update_transports(void);
 
@@ -204,6 +354,7 @@ void update_transports(void);
 // Stops iteration and returns false if fn returns false, otherwise returns true.
 bool iterate_transports(std::function<bool(const atransport*)> fn);
 
+void init_reconnect_handler(void);
 void init_transport_registration(void);
 void init_mdns_transport_discovery(void);
 std::string list_transports(bool long_listing);
@@ -218,19 +369,19 @@ void register_usb_transport(usb_handle* h, const char* serial,
 void connect_device(const std::string& address, std::string* response);
 
 /* cause new transports to be init'd and added to the list */
-int register_socket_transport(int s, const char* serial, int port, int local);
+bool register_socket_transport(unique_fd s, std::string serial, int port, int local,
+                               atransport::ReconnectCallback reconnect, int* error = nullptr);
 
 // This should only be used for transports with connection_state == kCsNoPerm.
 void unregister_usb_transport(usb_handle* usb);
 
 bool check_header(apacket* p, atransport* t);
-bool check_data(apacket* p);
 
 void close_usb_devices();
 void close_usb_devices(std::function<bool(const atransport*)> predicate);
 
 void send_packet(apacket* p, atransport* t);
 
-asocket* create_device_tracker(void);
+asocket* create_device_tracker(bool long_output);
 
 #endif   /* __TRANSPORT_H */

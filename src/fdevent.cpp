@@ -21,11 +21,14 @@
 #include "fdevent.h"
 
 #include <fcntl.h>
+#include <inttypes.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 #include <atomic>
+#include <deque>
 #include <functional>
 #include <list>
 #include <mutex>
@@ -35,18 +38,12 @@
 #include <android-base/logging.h>
 #include <android-base/stringprintf.h>
 #include <android-base/thread_annotations.h>
+#include <android-base/threads.h>
 
 #include "adb_io.h"
 #include "adb_trace.h"
 #include "adb_unique_fd.h"
 #include "adb_utils.h"
-
-#if !ADB_HOST
-// This socket is used when a subproc shell service exists.
-// It wakes up the fdevent_loop() and cause the correct handling
-// of the shell's pseudo-tty master. I.e. force close it.
-int SHELL_EXIT_NOTIFY_FD = -1;
-#endif // !ADB_HOST
 
 #define FDE_EVENTMASK  0x00ff
 #define FDE_STATEMASK  0xff00
@@ -61,7 +58,7 @@ struct PollNode {
 
   explicit PollNode(fdevent* fde) : fde(fde) {
       memset(&pollfd, 0, sizeof(pollfd));
-      pollfd.fd = fde->fd;
+      pollfd.fd = fde->fd.get();
 
 #if defined(__linux__)
       // Always enable POLLRDHUP, so the host server can take action when some clients disconnect.
@@ -77,21 +74,24 @@ static auto& g_poll_node_map = *new std::unordered_map<int, PollNode>();
 static auto& g_pending_list = *new std::list<fdevent*>();
 static std::atomic<bool> terminate_loop(false);
 static bool main_thread_valid;
-static unsigned long main_thread_id;
+static uint64_t main_thread_id;
 
+static uint64_t fdevent_id;
+
+static bool run_needs_flush = false;
 static auto& run_queue_notify_fd = *new unique_fd();
 static auto& run_queue_mutex = *new std::mutex();
-static auto& run_queue GUARDED_BY(run_queue_mutex) = *new std::vector<std::function<void()>>();
+static auto& run_queue GUARDED_BY(run_queue_mutex) = *new std::deque<std::function<void()>>();
 
 void check_main_thread() {
     if (main_thread_valid) {
-        CHECK_EQ(main_thread_id, adb_thread_id());
+        CHECK_EQ(main_thread_id, android::base::GetThreadId());
     }
 }
 
 void set_main_thread() {
     main_thread_valid = true;
-    main_thread_id = adb_thread_id();
+    main_thread_id = android::base::GetThreadId();
 }
 
 static std::string dump_fde(const fdevent* fde) {
@@ -114,37 +114,24 @@ static std::string dump_fde(const fdevent* fde) {
     if (fde->state & FDE_ERROR) {
         state += "E";
     }
-    if (fde->state & FDE_DONT_CLOSE) {
-        state += "D";
-    }
-    return android::base::StringPrintf("(fdevent %d %s)", fde->fd, state.c_str());
-}
-
-fdevent* fdevent_create(int fd, fd_func func, void* arg) {
-    check_main_thread();
-    fdevent *fde = (fdevent*) malloc(sizeof(fdevent));
-    if(fde == 0) return 0;
-    fdevent_install(fde, fd, func, arg);
-    fde->state |= FDE_CREATED;
-    return fde;
-}
-
-void fdevent_destroy(fdevent* fde) {
-    check_main_thread();
-    if(fde == 0) return;
-    if(!(fde->state & FDE_CREATED)) {
-        LOG(FATAL) << "destroying fde not created by fdevent_create(): " << dump_fde(fde);
-    }
-    fdevent_remove(fde);
-    free(fde);
+    return android::base::StringPrintf("(fdevent %" PRIu64 ": fd %d %s)", fde->id, fde->fd.get(),
+                                       state.c_str());
 }
 
 void fdevent_install(fdevent* fde, int fd, fd_func func, void* arg) {
     check_main_thread();
     CHECK_GE(fd, 0);
     memset(fde, 0, sizeof(fdevent));
+}
+
+fdevent* fdevent_create(int fd, fd_func func, void* arg) {
+    check_main_thread();
+    CHECK_GE(fd, 0);
+
+    fdevent* fde = new fdevent();
+    fde->id = fdevent_id++;
     fde->state = FDE_ACTIVE;
-    fde->fd = fd;
+    fde->fd.reset(fd);
     fde->func = func;
     fde->arg = arg;
     if (!set_file_block_mode(fd, false)) {
@@ -153,30 +140,35 @@ void fdevent_install(fdevent* fde, int fd, fd_func func, void* arg) {
         // to handle it.
         LOG(ERROR) << "failed to set non-blocking mode for fd " << fd;
     }
-    auto pair = g_poll_node_map.emplace(fde->fd, PollNode(fde));
+    auto pair = g_poll_node_map.emplace(fde->fd.get(), PollNode(fde));
     CHECK(pair.second) << "install existing fd " << fd;
-    D("fdevent_install %s", dump_fde(fde).c_str());
+
+    fde->state |= FDE_CREATED;
+    return fde;
 }
 
-void fdevent_remove(fdevent* fde) {
+void fdevent_destroy(fdevent* fde) {
     check_main_thread();
-    D("fdevent_remove %s", dump_fde(fde).c_str());
+    if (fde == nullptr) return;
+    if (!(fde->state & FDE_CREATED)) {
+        LOG(FATAL) << "destroying fde not created by fdevent_create(): " << dump_fde(fde);
+    }
+
     if (fde->state & FDE_ACTIVE) {
-        g_poll_node_map.erase(fde->fd);
+        g_poll_node_map.erase(fde->fd.get());
         if (fde->state & FDE_PENDING) {
             g_pending_list.remove(fde);
         }
-        if (!(fde->state & FDE_DONT_CLOSE)) {
-            adb_close(fde->fd);
-            fde->fd = -1;
-        }
+        fde->fd.reset();
         fde->state = 0;
         fde->events = 0;
     }
+
+    delete fde;
 }
 
 static void fdevent_update(fdevent* fde, unsigned events) {
-    auto it = g_poll_node_map.find(fde->fd);
+    auto it = g_poll_node_map.find(fde->fd.get());
     CHECK(it != g_poll_node_map.end());
     PollNode& node = it->second;
     if (events & FDE_READ) {
@@ -275,7 +267,7 @@ static void fdevent_process() {
             auto it = g_poll_node_map.find(pollfd.fd);
             CHECK(it != g_poll_node_map.end());
             fdevent* fde = it->second.fde;
-            CHECK_EQ(fde->fd, pollfd.fd);
+            CHECK_EQ(fde->fd.get(), pollfd.fd);
             fde->events |= events;
             D("%s got events %x", dump_fde(fde).c_str(), events);
             fde->state |= FDE_PENDING;
@@ -290,80 +282,24 @@ static void fdevent_call_fdfunc(fdevent* fde) {
     CHECK(fde->state & FDE_PENDING);
     fde->state &= (~FDE_PENDING);
     D("fdevent_call_fdfunc %s", dump_fde(fde).c_str());
-    fde->func(fde->fd, events, fde->arg);
+    fde->func(fde->fd.get(), events, fde->arg);
 }
 
-#if !ADB_HOST
-
-#include <sys/ioctl.h>
-
-static void fdevent_subproc_event_func(int fd, unsigned ev, void* /* userdata */) {
-    D("subproc handling on fd = %d, ev = %x", fd, ev);
-
-    CHECK_GE(fd, 0);
-
-    if (ev & FDE_READ) {
-        int subproc_fd;
-
-        if(!ReadFdExactly(fd, &subproc_fd, sizeof(subproc_fd))) {
-            LOG(FATAL) << "Failed to read the subproc's fd from " << fd;
+static void fdevent_run_flush() EXCLUDES(run_queue_mutex) {
+    // We need to be careful around reentrancy here, since a function we call can queue up another
+    // function.
+    while (true) {
+        std::function<void()> fn;
+        {
+            std::lock_guard<std::mutex> lock(run_queue_mutex);
+            if (run_queue.empty()) {
+                break;
+            }
+            fn = run_queue.front();
+            run_queue.pop_front();
         }
-        auto it = g_poll_node_map.find(subproc_fd);
-        if (it == g_poll_node_map.end()) {
-            D("subproc_fd %d cleared from fd_table", subproc_fd);
-            adb_close(subproc_fd);
-            return;
-        }
-        fdevent* subproc_fde = it->second.fde;
-        if(subproc_fde->fd != subproc_fd) {
-            // Already reallocated?
-            LOG(FATAL) << "subproc_fd(" << subproc_fd << ") != subproc_fde->fd(" << subproc_fde->fd
-                       << ")";
-            return;
-        }
-
-        subproc_fde->force_eof = 1;
-
-        int rcount = 0;
-        ioctl(subproc_fd, FIONREAD, &rcount);
-        D("subproc with fd %d has rcount=%d, err=%d", subproc_fd, rcount, errno);
-        if (rcount != 0) {
-            // If there is data left, it will show up in the select().
-            // This works because there is no other thread reading that
-            // data when in this fd_func().
-            return;
-        }
-
-        D("subproc_fde %s", dump_fde(subproc_fde).c_str());
-        subproc_fde->events |= FDE_READ;
-        if(subproc_fde->state & FDE_PENDING) {
-            return;
-        }
-        subproc_fde->state |= FDE_PENDING;
-        fdevent_call_fdfunc(subproc_fde);
+        fn();
     }
-}
-
-static void fdevent_subproc_setup() {
-    int s[2];
-
-    if(adb_socketpair(s)) {
-        PLOG(FATAL) << "cannot create shell-exit socket-pair";
-    }
-    D("fdevent_subproc: socket pair (%d, %d)", s[0], s[1]);
-
-    SHELL_EXIT_NOTIFY_FD = s[0];
-    fdevent *fde = fdevent_create(s[1], fdevent_subproc_event_func, NULL);
-    CHECK(fde != nullptr) << "cannot create fdevent for shell-exit handler";
-    fdevent_add(fde, FDE_READ);
-}
-#endif // !ADB_HOST
-
-static void fdevent_run_flush() REQUIRES(run_queue_mutex) {
-    for (auto& f : run_queue) {
-        f();
-    }
-    run_queue.clear();
 }
 
 static void fdevent_run_func(int fd, unsigned ev, void* /* userdata */) {
@@ -377,22 +313,28 @@ static void fdevent_run_func(int fd, unsigned ev, void* /* userdata */) {
         PLOG(FATAL) << "failed to empty run queue notify fd";
     }
 
-    std::lock_guard<std::mutex> lock(run_queue_mutex);
-    fdevent_run_flush();
+    // Mark that we need to flush, and then run it at the end of fdevent_loop.
+    run_needs_flush = true;
 }
 
 static void fdevent_run_setup() {
-    std::lock_guard<std::mutex> lock(run_queue_mutex);
-    CHECK(run_queue_notify_fd.get() == -1);
-    int s[2];
-    if (adb_socketpair(s) != 0) {
-        PLOG(FATAL) << "failed to create run queue notify socketpair";
-    }
+    {
+        std::lock_guard<std::mutex> lock(run_queue_mutex);
+        CHECK(run_queue_notify_fd.get() == -1);
+        int s[2];
+        if (adb_socketpair(s) != 0) {
+            PLOG(FATAL) << "failed to create run queue notify socketpair";
+        }
 
-    run_queue_notify_fd.reset(s[0]);
-    fdevent* fde = fdevent_create(s[1], fdevent_run_func, nullptr);
-    CHECK(fde != nullptr);
-    fdevent_add(fde, FDE_READ);
+        if (!set_file_block_mode(s[0], false) || !set_file_block_mode(s[1], false)) {
+            PLOG(FATAL) << "failed to make run queue notify socket nonblocking";
+        }
+
+        run_queue_notify_fd.reset(s[0]);
+        fdevent* fde = fdevent_create(s[1], fdevent_run_func, nullptr);
+        CHECK(fde != nullptr);
+        fdevent_add(fde, FDE_READ);
+    }
 
     fdevent_run_flush();
 }
@@ -404,7 +346,12 @@ void fdevent_run_on_main_thread(std::function<void()> fn) {
     // run_queue_notify_fd could still be -1 if we're called before fdevent has finished setting up.
     // In that case, rely on the setup code to flush the queue without a notification being needed.
     if (run_queue_notify_fd != -1) {
-        if (adb_write(run_queue_notify_fd.get(), "", 1) != 1) {
+        int rc = adb_write(run_queue_notify_fd.get(), "", 1);
+
+        // It's possible that we get EAGAIN here, if lots of notifications came in while handling.
+        if (rc == 0) {
+            PLOG(FATAL) << "run queue notify fd was closed?";
+        } else if (rc == -1 && errno != EAGAIN) {
             PLOG(FATAL) << "failed to write to run queue notify fd";
         }
     }
@@ -412,9 +359,6 @@ void fdevent_run_on_main_thread(std::function<void()> fn) {
 
 void fdevent_loop() {
     set_main_thread();
-#if !ADB_HOST
-    fdevent_subproc_setup();
-#endif // !ADB_HOST
     fdevent_run_setup();
 
     while (true) {
@@ -430,6 +374,11 @@ void fdevent_loop() {
             fdevent* fde = g_pending_list.front();
             g_pending_list.pop_front();
             fdevent_call_fdfunc(fde);
+        }
+
+        if (run_needs_flush) {
+            fdevent_run_flush();
+            run_needs_flush = false;
         }
     }
 }

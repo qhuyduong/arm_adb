@@ -28,7 +28,6 @@
 #include <android-base/errors.h>
 #include <android-base/file.h>
 #include <android-base/logging.h>
-#include <android-base/quick_exit.h>
 #include <android-base/stringprintf.h>
 
 #include "adb.h"
@@ -57,15 +56,6 @@ static void setup_daemon_logging() {
     LOG(INFO) << adb_version();
 }
 
-#if defined(_WIN32)
-static BOOL WINAPI ctrlc_handler(DWORD type) {
-    // TODO: Consider trying to kill a starting up adb server (if we're in
-    // launch_server) by calling GenerateConsoleCtrlEvent().
-    android::base::quick_exit(STATUS_CONTROL_C_EXIT);
-    return TRUE;
-}
-#endif
-
 void adb_server_cleanup() {
     // Upon exit, we want to clean up in the following order:
     //   1. close_smartsockets, so that we don't get any new clients
@@ -76,6 +66,12 @@ void adb_server_cleanup() {
     usb_cleanup();
 }
 
+static void intentionally_leak() {
+    void* p = ::operator new(1);
+    // The analyzer is upset about this leaking. NOLINTNEXTLINE
+    LOG(INFO) << "leaking pointer " << p;
+}
+
 int adb_server_main(int is_daemon, const std::string& socket_spec, int ack_reply_fd) {
 #if defined(_WIN32)
     // adb start-server starts us up with stdout and stderr hooked up to
@@ -84,35 +80,53 @@ int adb_server_main(int is_daemon, const std::string& socket_spec, int ack_reply
     // unbuffer stdout and stderr just like if we were run at the console.
     // This also keeps stderr unbuffered when it is redirected to adb.log.
     if (is_daemon) {
-        if (setvbuf(stdout, NULL, _IONBF, 0) == -1) {
+        if (setvbuf(stdout, nullptr, _IONBF, 0) == -1) {
             fatal("cannot make stdout unbuffered: %s", strerror(errno));
         }
-        if (setvbuf(stderr, NULL, _IONBF, 0) == -1) {
+        if (setvbuf(stderr, nullptr, _IONBF, 0) == -1) {
             fatal("cannot make stderr unbuffered: %s", strerror(errno));
         }
     }
 
-    SetConsoleCtrlHandler(ctrlc_handler, TRUE);
-#else
-    signal(SIGINT, [](int) {
-        fdevent_run_on_main_thread([]() { android::base::quick_exit(0); });
-    });
+    // TODO: On Ctrl-C, consider trying to kill a starting up adb server (if we're in
+    // launch_server) by calling GenerateConsoleCtrlEvent().
+
+    // On Windows, SIGBREAK is when Ctrl-Break is pressed or the console window is closed. It should
+    // act like Ctrl-C.
+    signal(SIGBREAK, [](int) { raise(SIGINT); });
 #endif
+    signal(SIGINT, [](int) {
+        fdevent_run_on_main_thread([]() { exit(0); });
+    });
+
+    char* leak = getenv("ADB_LEAK");
+    if (leak && strcmp(leak, "1") == 0) {
+        intentionally_leak();
+    }
 
     if (is_daemon) {
         close_stdin();
         setup_daemon_logging();
     }
 
-    android::base::at_quick_exit(adb_server_cleanup);
+    atexit(adb_server_cleanup);
 
     init_transport_registration();
-#ifndef DONT_USE_MDNS
-    init_mdns_transport_discovery();
-#endif
+    init_reconnect_handler();
 
-    usb_init();
-    local_init(DEFAULT_ADB_LOCAL_TRANSPORT_PORT);
+    if (!getenv("ADB_MDNS") || strcmp(getenv("ADB_MDNS"), "0") != 0) {
+        init_mdns_transport_discovery();
+    }
+
+    if (!getenv("ADB_USB") || strcmp(getenv("ADB_USB"), "0") != 0) {
+        usb_init();
+    } else {
+        adb_notify_device_scan_complete();
+    }
+
+    if (!getenv("ADB_EMU") || strcmp(getenv("ADB_EMU"), "0") != 0) {
+        local_init(DEFAULT_ADB_LOCAL_TRANSPORT_PORT);
+    }
 
     std::string error;
 

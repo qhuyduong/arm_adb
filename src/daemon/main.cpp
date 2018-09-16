@@ -18,11 +18,14 @@
 
 #include "sysdeps.h"
 
+#include <android/fdsan.h>
 #include <errno.h>
+#include <getopt.h>
+#include <malloc.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <getopt.h>
+#include <sys/capability.h>
 #include <sys/prctl.h>
 
 #include <memory>
@@ -36,7 +39,6 @@
 #include <scoped_minijail.h>
 
 #include <private/android_filesystem_config.h>
-#include "debuggerd/handler.h"
 #include "selinux/android.h"
 
 #include "adb.h"
@@ -49,13 +51,13 @@
 
 static const char* root_seclabel = nullptr;
 
-static void drop_capabilities_bounding_set_if_needed(struct minijail *j) {
+static bool should_drop_capabilities_bounding_set() {
 #if defined(ALLOW_ADBD_ROOT)
     if (__android_log_is_debuggable()) {
-        return;
+        return false;
     }
 #endif
-    minijail_capbset_drop(j, CAP_TO_MASK(CAP_SETUID) | CAP_TO_MASK(CAP_SETGID));
+    return true;
 }
 
 static bool should_drop_privileges() {
@@ -116,12 +118,36 @@ static void drop_privileges(int server_port) {
     // Don't listen on a port (default 5037) if running in secure mode.
     // Don't run as root if running in secure mode.
     if (should_drop_privileges()) {
-        drop_capabilities_bounding_set_if_needed(jail.get());
+        const bool should_drop_caps = should_drop_capabilities_bounding_set();
+
+        if (should_drop_caps) {
+            minijail_use_caps(jail.get(), CAP_TO_MASK(CAP_SETUID) | CAP_TO_MASK(CAP_SETGID));
+        }
 
         minijail_change_gid(jail.get(), AID_SHELL);
         minijail_change_uid(jail.get(), AID_SHELL);
         // minijail_enter() will abort if any priv-dropping step fails.
         minijail_enter(jail.get());
+
+        // Whenever ambient capabilities are being used, minijail cannot
+        // simultaneously drop the bounding capability set to just
+        // CAP_SETUID|CAP_SETGID while clearing the inheritable, effective,
+        // and permitted sets. So we need to do that in two steps.
+        using ScopedCaps =
+            std::unique_ptr<std::remove_pointer<cap_t>::type, std::function<void(cap_t)>>;
+        ScopedCaps caps(cap_get_proc(), &cap_free);
+        if (cap_clear_flag(caps.get(), CAP_INHERITABLE) == -1) {
+            PLOG(FATAL) << "cap_clear_flag(INHERITABLE) failed";
+        }
+        if (cap_clear_flag(caps.get(), CAP_EFFECTIVE) == -1) {
+            PLOG(FATAL) << "cap_clear_flag(PEMITTED) failed";
+        }
+        if (cap_clear_flag(caps.get(), CAP_PERMITTED) == -1) {
+            PLOG(FATAL) << "cap_clear_flag(PEMITTED) failed";
+        }
+        if (cap_set_proc(caps.get()) != 0) {
+            PLOG(FATAL) << "cap_set_proc() failed";
+        }
 
         D("Local port disabled");
     } else {
@@ -152,15 +178,21 @@ int adbd_main(int server_port) {
 
     signal(SIGPIPE, SIG_IGN);
 
+    auto fdsan_level = android_fdsan_get_error_level();
+    if (fdsan_level == ANDROID_FDSAN_ERROR_LEVEL_DISABLED) {
+        android_fdsan_set_error_level(ANDROID_FDSAN_ERROR_LEVEL_WARN_ONCE);
+    }
+
     init_transport_registration();
 
     // We need to call this even if auth isn't enabled because the file
     // descriptor will always be open.
     adbd_cloexec_auth_socket();
 
-    if (ALLOW_ADBD_NO_AUTH && !android::base::GetBoolProperty("ro.adb.secure", false)) {
-        auth_required = false;
-    }
+#if defined(ALLOW_ADBD_NO_AUTH)
+    // If ro.adb.secure is unset, default to no authentication required.
+    auth_required = android::base::GetBoolProperty("ro.adb.secure", false);
+#endif
 
     adbd_auth_init();
 
@@ -212,6 +244,9 @@ int adbd_main(int server_port) {
 }
 
 int main(int argc, char** argv) {
+    // Set M_DECAY_TIME so that our allocations aren't immediately purged on free.
+    mallopt(M_DECAY_TIME, 1);
+
     while (true) {
         static struct option opts[] = {
             {"root_seclabel", required_argument, nullptr, 's'},
@@ -233,8 +268,8 @@ int main(int argc, char** argv) {
             adb_device_banner = optarg;
             break;
         case 'v':
-            printf("Android Debug Bridge Daemon version %d.%d.%d (%s)\n", ADB_VERSION_MAJOR,
-                   ADB_VERSION_MINOR, ADB_SERVER_VERSION, ADB_VERSION);
+            printf("Android Debug Bridge Daemon version %d.%d.%d\n", ADB_VERSION_MAJOR,
+                   ADB_VERSION_MINOR, ADB_SERVER_VERSION);
             return 0;
         default:
             // getopt already prints "adbd: invalid option -- %c" for us.
@@ -244,7 +279,6 @@ int main(int argc, char** argv) {
 
     close_stdin();
 
-    debuggerd_init(nullptr);
     adb_trace_init(argv);
 
     D("Handling main()");

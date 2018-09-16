@@ -28,11 +28,11 @@
 #include "adb_trace.h"
 #include "fdevent.h"
 #include "socket.h"
+#include "types.h"
 #include "usb.h"
 
 constexpr size_t MAX_PAYLOAD_V1 = 4 * 1024;
-constexpr size_t MAX_PAYLOAD_V2 = 256 * 1024;
-constexpr size_t MAX_PAYLOAD = MAX_PAYLOAD_V2;
+constexpr size_t MAX_PAYLOAD = 1024 * 1024;
 
 constexpr size_t LINUX_MAX_SOCKET_SIZE = 4194304;
 
@@ -45,7 +45,12 @@ constexpr size_t LINUX_MAX_SOCKET_SIZE = 4194304;
 #define A_AUTH 0x48545541
 
 // ADB protocol version.
-#define A_VERSION 0x01000000
+// Version revision:
+// 0x01000000: original
+// 0x01000001: skip checksum (Dec 2017)
+#define A_VERSION_MIN 0x01000000
+#define A_VERSION_SKIP_CHECKSUM 0x01000001
+#define A_VERSION 0x01000001
 
 // Used for help/version information.
 #define ADB_VERSION_MAJOR 1
@@ -54,29 +59,10 @@ constexpr size_t LINUX_MAX_SOCKET_SIZE = 4194304;
 std::string adb_version();
 
 // Increment this when we want to force users to start a new adb server.
-#define ADB_SERVER_VERSION 39
+#define ADB_SERVER_VERSION 40
 
+using TransportId = uint64_t;
 class atransport;
-
-struct amessage {
-    uint32_t command;     /* command identifier constant      */
-    uint32_t arg0;        /* first argument                   */
-    uint32_t arg1;        /* second argument                  */
-    uint32_t data_length; /* length of payload (0 is allowed) */
-    uint32_t data_check;  /* checksum of data payload         */
-    uint32_t magic;       /* command ^ 0xffffffff             */
-};
-
-struct apacket
-{
-    apacket *next;
-
-    size_t len;
-    char* ptr;
-
-    amessage msg;
-    char data[MAX_PAYLOAD];
-};
 
 uint32_t calculate_apacket_checksum(const apacket* packet);
 
@@ -85,12 +71,10 @@ uint32_t calculate_apacket_checksum(const apacket* packet);
 ** this should be used to cleanup objects that depend on the
 ** transport (e.g. remote sockets, listeners, etc...)
 */
-struct  adisconnect
-{
-    void        (*func)(void*  opaque, atransport*  t);
-    void*         opaque;
+struct adisconnect {
+    void (*func)(void* opaque, atransport* t);
+    void* opaque;
 };
-
 
 // A transport object models the connection to a remote device or emulator there
 // is one transport per connected device/emulator. A "local transport" connects
@@ -111,34 +95,45 @@ enum TransportType {
 
 enum ConnectionState {
     kCsAny = -1,
-    kCsOffline = 0,
+
+    kCsConnecting = 0,  // Haven't received a response from the device yet.
+    kCsAuthorizing,     // Authorizing with keys from ADB_VENDOR_KEYS.
+    kCsUnauthorized,    // ADB_VENDOR_KEYS exhausted, fell back to user prompt.
+    kCsNoPerm,          // Insufficient permissions to communicate with the device.
+    kCsOffline,
+
     kCsBootloader,
     kCsDevice,
     kCsHost,
     kCsRecovery,
-    kCsNoPerm,  // Insufficient permissions to communicate with the device.
     kCsSideload,
-    kCsUnauthorized,
 };
 
+inline bool ConnectionStateIsOnline(ConnectionState state) {
+    switch (state) {
+        case kCsBootloader:
+        case kCsDevice:
+        case kCsHost:
+        case kCsRecovery:
+        case kCsSideload:
+            return true;
+        default:
+            return false;
+    }
+}
 
-void print_packet(const char *label, apacket *p);
+void print_packet(const char* label, apacket* p);
 
-// These use the system (v)fprintf, not the adb prefixed ones defined in sysdeps.h, so they
-// shouldn't be tagged with ADB_FORMAT_ARCHETYPE.
 void fatal(const char* fmt, ...) __attribute__((noreturn, format(__printf__, 1, 2)));
 void fatal_errno(const char* fmt, ...) __attribute__((noreturn, format(__printf__, 1, 2)));
 
-void handle_packet(apacket *p, atransport *t);
+void handle_packet(apacket* p, atransport* t);
 
 int launch_server(const std::string& socket_spec);
 int adb_server_main(int is_daemon, const std::string& socket_spec, int ack_reply_fd);
 
 /* initialize a transport object's func pointers and state */
-#if ADB_HOST
-int get_available_local_transport_index();
-#endif
-int  init_socket_transport(atransport *t, int s, int port, int local);
+int init_socket_transport(atransport* t, unique_fd s, int port, int local);
 void init_usb_transport(atransport* t, usb_handle* usb);
 
 std::string getEmulatorSerialString(int console_port);
@@ -147,84 +142,81 @@ atransport* find_emulator_transport_by_adb_port(int adb_port);
 atransport* find_emulator_transport_by_console_port(int console_port);
 #endif
 
-int service_to_fd(const char* name, const atransport* transport);
+int service_to_fd(const char* name, atransport* transport);
+#if !ADB_HOST
+unique_fd daemon_service_to_fd(const char* name, atransport* transport);
+#endif
+
 #if ADB_HOST
-asocket *host_service_to_socket(const char*  name, const char *serial);
+asocket* host_service_to_socket(const char* name, const char* serial, TransportId transport_id);
 #endif
 
 #if !ADB_HOST
-int       init_jdwp(void);
-asocket*  create_jdwp_service_socket();
-asocket*  create_jdwp_tracker_service_socket();
-int       create_jdwp_connection_fd(int  jdwp_pid);
+int init_jdwp(void);
+asocket* create_jdwp_service_socket();
+asocket* create_jdwp_tracker_service_socket();
+unique_fd create_jdwp_connection_fd(int jdwp_pid);
 #endif
 
-int handle_forward_request(const char* service, TransportType type, const char* serial, int reply_fd);
-
-#if !ADB_HOST
-void framebuffer_service(int fd, void *cookie);
-void set_verity_enabled_state_service(int fd, void* cookie);
-#endif
+bool handle_forward_request(const char* service, atransport* transport, int reply_fd);
+bool handle_forward_request(const char* service,
+                            std::function<atransport*(std::string* error)> transport_acquirer,
+                            int reply_fd);
 
 /* packet allocator */
-apacket *get_apacket(void);
-void put_apacket(apacket *p);
+apacket* get_apacket(void);
+void put_apacket(apacket* p);
 
 // Define it if you want to dump packets.
 #define DEBUG_PACKETS 0
 
 #if !DEBUG_PACKETS
-#define print_packet(tag,p) do {} while (0)
+#define print_packet(tag, p) \
+    do {                     \
+    } while (0)
 #endif
 
 #if ADB_HOST_ON_TARGET
 /* adb and adbd are coexisting on the target, so use 5038 for adb
  * to avoid conflicting with adbd's usage of 5037
  */
-#  define DEFAULT_ADB_PORT 5038
+#define DEFAULT_ADB_PORT 5038
 #else
-#  define DEFAULT_ADB_PORT 5037
+#define DEFAULT_ADB_PORT 5037
 #endif
 
 #define DEFAULT_ADB_LOCAL_TRANSPORT_PORT 5555
 
-#define ADB_CLASS              0xff
-#define ADB_SUBCLASS           0x42
-#define ADB_PROTOCOL           0x1
-
+#define ADB_CLASS 0xff
+#define ADB_SUBCLASS 0x42
+#define ADB_PROTOCOL 0x1
 
 void local_init(int port);
 bool local_connect(int port);
-int  local_connect_arbitrary_ports(int console_port, int adb_port, std::string* error);
+int local_connect_arbitrary_ports(int console_port, int adb_port, std::string* error);
 
-ConnectionState connection_state(atransport *t);
+ConnectionState connection_state(atransport* t);
 
 extern const char* adb_device_banner;
 
-#if !ADB_HOST
-extern int SHELL_EXIT_NOTIFY_FD;
-#endif // !ADB_HOST
-
-#define CHUNK_SIZE (64*1024)
+#define CHUNK_SIZE (64 * 1024)
 
 #if !ADB_HOST
-#define USB_FFS_ADB_PATH  "/dev/usb-ffs/adb/"
-#define USB_FFS_ADB_EP(x) USB_FFS_ADB_PATH#x
+#define USB_FFS_ADB_PATH "/dev/usb-ffs/adb/"
+#define USB_FFS_ADB_EP(x) USB_FFS_ADB_PATH #x
 
-#define USB_FFS_ADB_EP0   USB_FFS_ADB_EP(ep0)
-#define USB_FFS_ADB_OUT   USB_FFS_ADB_EP(ep1)
-#define USB_FFS_ADB_IN    USB_FFS_ADB_EP(ep2)
+#define USB_FFS_ADB_EP0 USB_FFS_ADB_EP(ep0)
+#define USB_FFS_ADB_OUT USB_FFS_ADB_EP(ep1)
+#define USB_FFS_ADB_IN USB_FFS_ADB_EP(ep2)
 #endif
 
-int handle_host_request(const char* service, TransportType type, const char* serial, int reply_fd, asocket *s);
+bool handle_host_request(const char* service, TransportType type, const char* serial,
+                         TransportId transport_id, int reply_fd, asocket* s);
 
-void handle_online(atransport *t);
-void handle_offline(atransport *t);
+void handle_online(atransport* t);
+void handle_offline(atransport* t);
 
-void send_connect(atransport *t);
-#if ADB_HOST
-void SendConnectOnHost(atransport* t);
-#endif
+void send_connect(atransport* t);
 
 void parse_banner(const std::string&, atransport* t);
 

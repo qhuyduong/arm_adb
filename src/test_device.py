@@ -31,13 +31,11 @@ import string
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 
-import mock
-
 import adb
-
 
 def requires_root(func):
     def wrapper(self, *args):
@@ -74,59 +72,6 @@ def requires_non_root(func):
                 self.device.wait()
 
     return wrapper
-
-
-class GetDeviceTest(unittest.TestCase):
-    def setUp(self):
-        self.android_serial = os.getenv('ANDROID_SERIAL')
-        if 'ANDROID_SERIAL' in os.environ:
-            del os.environ['ANDROID_SERIAL']
-
-    def tearDown(self):
-        if self.android_serial is not None:
-            os.environ['ANDROID_SERIAL'] = self.android_serial
-        else:
-            if 'ANDROID_SERIAL' in os.environ:
-                del os.environ['ANDROID_SERIAL']
-
-    @mock.patch('adb.device.get_devices')
-    def test_explicit(self, mock_get_devices):
-        mock_get_devices.return_value = ['foo', 'bar']
-        device = adb.get_device('foo')
-        self.assertEqual(device.serial, 'foo')
-
-    @mock.patch('adb.device.get_devices')
-    def test_from_env(self, mock_get_devices):
-        mock_get_devices.return_value = ['foo', 'bar']
-        os.environ['ANDROID_SERIAL'] = 'foo'
-        device = adb.get_device()
-        self.assertEqual(device.serial, 'foo')
-
-    @mock.patch('adb.device.get_devices')
-    def test_arg_beats_env(self, mock_get_devices):
-        mock_get_devices.return_value = ['foo', 'bar']
-        os.environ['ANDROID_SERIAL'] = 'bar'
-        device = adb.get_device('foo')
-        self.assertEqual(device.serial, 'foo')
-
-    @mock.patch('adb.device.get_devices')
-    def test_no_such_device(self, mock_get_devices):
-        mock_get_devices.return_value = ['foo', 'bar']
-        self.assertRaises(adb.DeviceNotFoundError, adb.get_device, ['baz'])
-
-        os.environ['ANDROID_SERIAL'] = 'baz'
-        self.assertRaises(adb.DeviceNotFoundError, adb.get_device)
-
-    @mock.patch('adb.device.get_devices')
-    def test_unique_device(self, mock_get_devices):
-        mock_get_devices.return_value = ['foo']
-        device = adb.get_device()
-        self.assertEqual(device.serial, 'foo')
-
-    @mock.patch('adb.device.get_devices')
-    def test_no_unique_device(self, mock_get_devices):
-        mock_get_devices.return_value = ['foo', 'bar']
-        self.assertRaises(adb.NoUniqueDeviceError, adb.get_device)
 
 
 class DeviceTest(unittest.TestCase):
@@ -243,8 +188,6 @@ class ForwardReverseTest(DeviceTest):
         finally:
             self.device.reverse_remove_all()
 
-    # Note: If you run this test when adb connect'd to a physical device over
-    # TCP, it will fail in adb reverse due to https://code.google.com/p/android/issues/detail?id=189821
     def test_forward_reverse_echo(self):
         """Send data through adb forward and read it back via adb reverse"""
         forward_port = 12345
@@ -549,6 +492,29 @@ class ShellTest(DeviceTest):
         stdout, _ = self.device.shell(["cat", log_path])
         self.assertEqual(stdout.strip(), "SIGHUP")
 
+    def test_exit_stress(self):
+        """Hammer `adb shell exit 42` with multiple threads."""
+        thread_count = 48
+        result = dict()
+        def hammer(thread_idx, thread_count, result):
+            success = True
+            for i in range(thread_idx, 240, thread_count):
+                ret = subprocess.call(['adb', 'shell', 'exit {}'.format(i)])
+                if ret != i % 256:
+                    success = False
+                    break
+            result[thread_idx] = success
+
+        threads = []
+        for i in range(thread_count):
+            thread = threading.Thread(target=hammer, args=(i, thread_count, result))
+            thread.start()
+            threads.append(thread)
+        for thread in threads:
+            thread.join()
+        for i, success in result.iteritems():
+            self.assertTrue(success)
+
 
 class ArgumentEscapingTest(DeviceTest):
     def test_shell_escaping(self):
@@ -784,7 +750,6 @@ class FileOperationsTest(DeviceTest):
             if host_dir is not None:
                 shutil.rmtree(host_dir)
 
-    @unittest.expectedFailure # b/25566053
     def test_push_empty(self):
         """Push a directory containing an empty directory to the device."""
         self.device.shell(['rm', '-rf', self.DEVICE_TEMP_DIR])
@@ -797,9 +762,10 @@ class FileOperationsTest(DeviceTest):
             os.chmod(host_dir, 0o700)
 
             # Create an empty directory.
-            os.mkdir(os.path.join(host_dir, 'empty'))
+            empty_dir_path = os.path.join(host_dir, 'empty')
+            os.mkdir(empty_dir_path);
 
-            self.device.push(host_dir, self.DEVICE_TEMP_DIR)
+            self.device.push(empty_dir_path, self.DEVICE_TEMP_DIR)
 
             test_empty_cmd = ['[', '-d',
                               os.path.join(self.DEVICE_TEMP_DIR, 'empty')]
@@ -899,6 +865,21 @@ class FileOperationsTest(DeviceTest):
 
             self.assertTrue('Permission denied' in output or
                             'Read-only file system' in output)
+
+    @requires_non_root
+    def test_push_directory_creation(self):
+        """Regression test for directory creation.
+
+        Bug: http://b/110953234
+        """
+        with tempfile.NamedTemporaryFile() as tmp_file:
+            tmp_file.write('\0' * 1024 * 1024)
+            tmp_file.flush()
+            remote_path = self.DEVICE_TEMP_DIR + '/test_push_directory_creation'
+            self.device.shell(['rm', '-rf', remote_path])
+
+            remote_path += '/filename'
+            self.device.push(local=tmp_file.name, remote=remote_path)
 
     def _test_pull(self, remote_file, checksum):
         tmp_write = tempfile.NamedTemporaryFile(mode='wb', delete=False)
@@ -1052,7 +1033,8 @@ class FileOperationsTest(DeviceTest):
             if host_dir is not None:
                 shutil.rmtree(host_dir)
 
-    def test_pull_symlink_dir(self):
+    # selinux prevents adbd from accessing symlinks on /data/local/tmp.
+    def disabled_test_pull_symlink_dir(self):
         """Pull a symlink to a directory of symlinks to files."""
         try:
             host_dir = tempfile.mkdtemp()
@@ -1219,7 +1201,7 @@ class FileOperationsTest(DeviceTest):
         # Verify that the device ended up with the expected UTF-8 path
         output = self.device.shell(
                 ['ls', '/data/local/tmp/adb-test-*'])[0].strip()
-        self.assertEqual(remote_path.encode('utf-8'), output)
+        self.assertEqual(remote_path, output)
 
         # pull.
         self.device.pull(remote_path, tf.name)
@@ -1237,7 +1219,7 @@ class DeviceOfflineTest(DeviceTest):
                 return m.group(2)
         return None
 
-    def test_killed_when_pushing_a_large_file(self):
+    def disabled_test_killed_when_pushing_a_large_file(self):
         """
            While running adb push with a large file, kill adb server.
            Occasionally the device becomes offline. Because the device is still
@@ -1268,7 +1250,7 @@ class DeviceOfflineTest(DeviceTest):
         # 4. The device should be online
         self.assertEqual(self._get_device_state(serialno), 'device')
 
-    def test_killed_when_pulling_a_large_file(self):
+    def disabled_test_killed_when_pulling_a_large_file(self):
         """
            While running adb pull with a large file, kill adb server.
            Occasionally the device can't be connected. Because the device is trying to
@@ -1307,16 +1289,249 @@ class DeviceOfflineTest(DeviceTest):
         """
         # The values that trigger things are 507 (512 - 5 bytes from shell protocol) + 1024*n
         # Probe some surrounding values as well, for the hell of it.
-        for length in [506, 507, 508, 1018, 1019, 1020, 1530, 1531, 1532]:
-            cmd = ['dd', 'if=/dev/zero', 'bs={}'.format(length), 'count=1', '2>/dev/null;'
-                   'echo', 'foo']
-            rc, stdout, _ = self.device.shell_nocheck(cmd)
+        for base in [512] + range(1024, 1024 * 16, 1024):
+            for offset in [-6, -5, -4]:
+                length = base + offset
+                cmd = ['dd', 'if=/dev/zero', 'bs={}'.format(length), 'count=1', '2>/dev/null;'
+                       'echo', 'foo']
+                rc, stdout, _ = self.device.shell_nocheck(cmd)
 
-            self.assertEqual(0, rc)
+                self.assertEqual(0, rc)
 
-            # Output should be '\0' * length, followed by "foo\n"
-            self.assertEqual(length, len(stdout) - 4)
-            self.assertEqual(stdout, "\0" * length + "foo\n")
+                # Output should be '\0' * length, followed by "foo\n"
+                self.assertEqual(length, len(stdout) - 4)
+                self.assertEqual(stdout, "\0" * length + "foo\n")
+
+    def test_zero_packet(self):
+        """Test for http://b/113070258
+
+        Make sure that we don't blow up when sending USB transfers that line up
+        exactly with the USB packet size.
+        """
+
+        local_port = int(self.device.forward("tcp:0", "tcp:12345"))
+        try:
+            for size in [512, 1024]:
+                def listener():
+                    cmd = ["echo foo | nc -l -p 12345; echo done"]
+                    rc, stdout, stderr = self.device.shell_nocheck(cmd)
+
+                thread = threading.Thread(target=listener)
+                thread.start()
+
+                # Wait a bit to let the shell command start.
+                time.sleep(0.25)
+
+                sock = socket.create_connection(("localhost", local_port))
+                with contextlib.closing(sock):
+                    bytesWritten = sock.send("a" * size)
+                    self.assertEqual(size, bytesWritten)
+                    readBytes = sock.recv(4096)
+                    self.assertEqual("foo\n", readBytes)
+
+                thread.join()
+        finally:
+            self.device.forward_remove("tcp:{}".format(local_port))
+
+
+if sys.platform == "win32":
+    # From https://stackoverflow.com/a/38749458
+    import os
+    import contextlib
+    import msvcrt
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+
+    GENERIC_READ  = 0x80000000
+    GENERIC_WRITE = 0x40000000
+    FILE_SHARE_READ  = 1
+    FILE_SHARE_WRITE = 2
+    CONSOLE_TEXTMODE_BUFFER = 1
+    INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
+    STD_OUTPUT_HANDLE = wintypes.DWORD(-11)
+    STD_ERROR_HANDLE = wintypes.DWORD(-12)
+
+    def _check_zero(result, func, args):
+        if not result:
+            raise ctypes.WinError(ctypes.get_last_error())
+        return args
+
+    def _check_invalid(result, func, args):
+        if result == INVALID_HANDLE_VALUE:
+            raise ctypes.WinError(ctypes.get_last_error())
+        return args
+
+    if not hasattr(wintypes, 'LPDWORD'): # Python 2
+        wintypes.LPDWORD = ctypes.POINTER(wintypes.DWORD)
+        wintypes.PSMALL_RECT = ctypes.POINTER(wintypes.SMALL_RECT)
+
+    class COORD(ctypes.Structure):
+        _fields_ = (('X', wintypes.SHORT),
+                    ('Y', wintypes.SHORT))
+
+    class CONSOLE_SCREEN_BUFFER_INFOEX(ctypes.Structure):
+        _fields_ = (('cbSize',               wintypes.ULONG),
+                    ('dwSize',               COORD),
+                    ('dwCursorPosition',     COORD),
+                    ('wAttributes',          wintypes.WORD),
+                    ('srWindow',             wintypes.SMALL_RECT),
+                    ('dwMaximumWindowSize',  COORD),
+                    ('wPopupAttributes',     wintypes.WORD),
+                    ('bFullscreenSupported', wintypes.BOOL),
+                    ('ColorTable',           wintypes.DWORD * 16))
+        def __init__(self, *args, **kwds):
+            super(CONSOLE_SCREEN_BUFFER_INFOEX, self).__init__(
+                    *args, **kwds)
+            self.cbSize = ctypes.sizeof(self)
+
+    PCONSOLE_SCREEN_BUFFER_INFOEX = ctypes.POINTER(
+                                        CONSOLE_SCREEN_BUFFER_INFOEX)
+    LPSECURITY_ATTRIBUTES = wintypes.LPVOID
+
+    kernel32.GetStdHandle.errcheck = _check_invalid
+    kernel32.GetStdHandle.restype = wintypes.HANDLE
+    kernel32.GetStdHandle.argtypes = (
+        wintypes.DWORD,) # _In_ nStdHandle
+
+    kernel32.CreateConsoleScreenBuffer.errcheck = _check_invalid
+    kernel32.CreateConsoleScreenBuffer.restype = wintypes.HANDLE
+    kernel32.CreateConsoleScreenBuffer.argtypes = (
+        wintypes.DWORD,        # _In_       dwDesiredAccess
+        wintypes.DWORD,        # _In_       dwShareMode
+        LPSECURITY_ATTRIBUTES, # _In_opt_   lpSecurityAttributes
+        wintypes.DWORD,        # _In_       dwFlags
+        wintypes.LPVOID)       # _Reserved_ lpScreenBufferData
+
+    kernel32.GetConsoleScreenBufferInfoEx.errcheck = _check_zero
+    kernel32.GetConsoleScreenBufferInfoEx.argtypes = (
+        wintypes.HANDLE,               # _In_  hConsoleOutput
+        PCONSOLE_SCREEN_BUFFER_INFOEX) # _Out_ lpConsoleScreenBufferInfo
+
+    kernel32.SetConsoleScreenBufferInfoEx.errcheck = _check_zero
+    kernel32.SetConsoleScreenBufferInfoEx.argtypes = (
+        wintypes.HANDLE,               # _In_  hConsoleOutput
+        PCONSOLE_SCREEN_BUFFER_INFOEX) # _In_  lpConsoleScreenBufferInfo
+
+    kernel32.SetConsoleWindowInfo.errcheck = _check_zero
+    kernel32.SetConsoleWindowInfo.argtypes = (
+        wintypes.HANDLE,      # _In_ hConsoleOutput
+        wintypes.BOOL,        # _In_ bAbsolute
+        wintypes.PSMALL_RECT) # _In_ lpConsoleWindow
+
+    kernel32.FillConsoleOutputCharacterW.errcheck = _check_zero
+    kernel32.FillConsoleOutputCharacterW.argtypes = (
+        wintypes.HANDLE,  # _In_  hConsoleOutput
+        wintypes.WCHAR,   # _In_  cCharacter
+        wintypes.DWORD,   # _In_  nLength
+        COORD,            # _In_  dwWriteCoord
+        wintypes.LPDWORD) # _Out_ lpNumberOfCharsWritten
+
+    kernel32.ReadConsoleOutputCharacterW.errcheck = _check_zero
+    kernel32.ReadConsoleOutputCharacterW.argtypes = (
+        wintypes.HANDLE,  # _In_  hConsoleOutput
+        wintypes.LPWSTR,  # _Out_ lpCharacter
+        wintypes.DWORD,   # _In_  nLength
+        COORD,            # _In_  dwReadCoord
+        wintypes.LPDWORD) # _Out_ lpNumberOfCharsRead
+
+    @contextlib.contextmanager
+    def allocate_console():
+        allocated = kernel32.AllocConsole()
+        try:
+            yield allocated
+        finally:
+            if allocated:
+                kernel32.FreeConsole()
+
+    @contextlib.contextmanager
+    def console_screen(ncols=None, nrows=None):
+        info = CONSOLE_SCREEN_BUFFER_INFOEX()
+        new_info = CONSOLE_SCREEN_BUFFER_INFOEX()
+        nwritten = (wintypes.DWORD * 1)()
+        hStdOut = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+        kernel32.GetConsoleScreenBufferInfoEx(
+               hStdOut, ctypes.byref(info))
+        if ncols is None:
+            ncols = info.dwSize.X
+        if nrows is None:
+            nrows = info.dwSize.Y
+        elif nrows > 9999:
+            raise ValueError('nrows must be 9999 or less')
+        fd_screen = None
+        hScreen = kernel32.CreateConsoleScreenBuffer(
+                    GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    None, CONSOLE_TEXTMODE_BUFFER, None)
+        try:
+            fd_screen = msvcrt.open_osfhandle(
+                            hScreen, os.O_RDWR | os.O_BINARY)
+            kernel32.GetConsoleScreenBufferInfoEx(
+                   hScreen, ctypes.byref(new_info))
+            new_info.dwSize = COORD(ncols, nrows)
+            new_info.srWindow = wintypes.SMALL_RECT(
+                    Left=0, Top=0, Right=(ncols - 1),
+                    Bottom=(info.srWindow.Bottom - info.srWindow.Top))
+            kernel32.SetConsoleScreenBufferInfoEx(
+                    hScreen, ctypes.byref(new_info))
+            kernel32.SetConsoleWindowInfo(hScreen, True,
+                    ctypes.byref(new_info.srWindow))
+            kernel32.FillConsoleOutputCharacterW(
+                    hScreen, u'\0', ncols * nrows, COORD(0,0), nwritten)
+            kernel32.SetConsoleActiveScreenBuffer(hScreen)
+            try:
+                yield fd_screen
+            finally:
+                kernel32.SetConsoleScreenBufferInfoEx(
+                    hStdOut, ctypes.byref(info))
+                kernel32.SetConsoleWindowInfo(hStdOut, True,
+                        ctypes.byref(info.srWindow))
+                kernel32.SetConsoleActiveScreenBuffer(hStdOut)
+        finally:
+            if fd_screen is not None:
+                os.close(fd_screen)
+            else:
+                kernel32.CloseHandle(hScreen)
+
+    def read_screen(fd):
+        hScreen = msvcrt.get_osfhandle(fd)
+        csbi = CONSOLE_SCREEN_BUFFER_INFOEX()
+        kernel32.GetConsoleScreenBufferInfoEx(
+            hScreen, ctypes.byref(csbi))
+        ncols = csbi.dwSize.X
+        pos = csbi.dwCursorPosition
+        length = ncols * pos.Y + pos.X + 1
+        buf = (ctypes.c_wchar * length)()
+        n = (wintypes.DWORD * 1)()
+        kernel32.ReadConsoleOutputCharacterW(
+            hScreen, buf, length, COORD(0,0), n)
+        lines = [buf[i:i+ncols].rstrip(u'\0')
+                    for i in range(0, n[0], ncols)]
+        return u'\n'.join(lines)
+
+@unittest.skipUnless(sys.platform == "win32", "requires Windows")
+class WindowsConsoleTest(DeviceTest):
+    def test_unicode_output(self):
+        """Test Unicode command line parameters and Unicode console window output.
+
+        Bug: https://issuetracker.google.com/issues/111972753
+        """
+        # If we don't have a console window, allocate one. This isn't necessary if we're already
+        # being run from a console window, which is typical.
+        with allocate_console() as allocated_console:
+            # Create a temporary console buffer and switch to it. We could also pass a parameter of
+            # ncols=len(unicode_string), but it causes the window to flash as it is resized and
+            # likely unnecessary given the typical console window size.
+            with console_screen(nrows=1000) as screen:
+                unicode_string = u'로보카 폴리'
+                # Run adb and allow it to detect that stdout is a console, not a pipe, by using
+                # device.shell_popen() which does not use a pipe, unlike device.shell().
+                process = self.device.shell_popen(['echo', '"' + unicode_string + '"'])
+                process.wait()
+                # Read what was written by adb to the temporary console buffer.
+                console_output = read_screen(screen)
+                self.assertEqual(unicode_string, console_output)
 
 
 def main():

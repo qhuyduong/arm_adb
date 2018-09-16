@@ -20,22 +20,6 @@
 
 #include "adb.h"
 
-TEST(transport, kick_transport) {
-  atransport t;
-  static size_t kick_count;
-  kick_count = 0;
-  // Mutate some member so we can test that the function is run.
-  t.SetKickFunction([](atransport* trans) { kick_count++; });
-  ASSERT_FALSE(t.IsKicked());
-  t.Kick();
-  ASSERT_TRUE(t.IsKicked());
-  ASSERT_EQ(1u, kick_count);
-  // A transport can only be kicked once.
-  t.Kick();
-  ASSERT_TRUE(t.IsKicked());
-  ASSERT_EQ(1u, kick_count);
-}
-
 static void DisconnectFunc(void* arg, atransport*) {
     int* count = reinterpret_cast<int*>(arg);
     ++*count;
@@ -102,9 +86,9 @@ TEST(transport, parse_banner_no_features) {
     ASSERT_EQ(0U, t.features().size());
     ASSERT_EQ(kCsHost, t.GetConnectionState());
 
-    ASSERT_EQ(nullptr, t.product);
-    ASSERT_EQ(nullptr, t.model);
-    ASSERT_EQ(nullptr, t.device);
+    ASSERT_EQ(std::string(), t.product);
+    ASSERT_EQ(std::string(), t.model);
+    ASSERT_EQ(std::string(), t.device);
 }
 
 TEST(transport, parse_banner_product_features) {

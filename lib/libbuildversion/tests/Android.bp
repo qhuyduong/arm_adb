@@ -1,0 +1,35 @@
+cc_defaults {
+    name: "build_version_test_defaults",
+    use_version_lib: true,
+    host_supported: true,
+    target: {
+        windows: {
+            enabled: true,
+        },
+    },
+}
+
+cc_test {
+    name: "build_version_test",
+    defaults: ["build_version_test_defaults"],
+    srcs: ["build_version_test.cpp"],
+    target: {
+        android: {
+            shared_libs: ["libbuild_version_test"],
+        },
+        not_windows: {
+            shared_libs: ["libbuild_version_test"],
+        },
+    },
+}
+
+cc_library_shared {
+    name: "libbuild_version_test",
+    defaults: ["build_version_test_defaults"],
+    srcs: ["build_version_test_lib.cpp"],
+    target: {
+        windows: {
+            enabled: false,
+        },
+    },
+}

@@ -1,4 +1,4 @@
-lib_LTLIBRARIES = libbase.la libcrypto_utils.la libcutils.la liblog.la
+lib_LTLIBRARIES = libbase.la libbuildversion.la libcrypto_utils.la libcutils.la liblog.la
 
 libbase_la_SOURCES = base/file.cpp base/stringprintf.cpp \
 		     base/strings.cpp base/logging.cpp \
@@ -6,6 +6,11 @@ libbase_la_SOURCES = base/file.cpp base/stringprintf.cpp \
 libbase_la_CXXFLAGS = -I$(includedir) -I$(top_srcdir)/include \
 		      -I$(top_srcdir)/lib/base/include \
 		      -std=c++11
+
+libbuildversion_la_SOURCES = libbuildversion/libbuildversion.cpp
+libbuildversion_la_CXXFLAGS = -I$(includedir) -I$(top_srcdir)/include \
+					-I$(top_srcdir)/lib/libbuildversion/include \
+					-std=c++11
 
 libcrypto_utils_la_SOURCES = libcrypto_utils/android_pubkey.c
 libcrypto_utils_la_CFLAGS = -I$(includedir) -I$(top_srcdir)/include \

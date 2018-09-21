@@ -22,6 +22,7 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <cstring>
 
 #include <android-base/logging.h>
 

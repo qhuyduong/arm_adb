@@ -18,6 +18,7 @@
 #include "usb.h"
 
 void usb_init() {
+#ifndef DONT_USE_LIBUSB
     if (should_use_libusb()) {
         LOG(DEBUG) << "using libusb backend";
         libusb::usb_init();
@@ -25,40 +26,68 @@ void usb_init() {
         LOG(DEBUG) << "using native backend";
         native::usb_init();
     }
+#else
+    LOG(DEBUG) << "using native backend";
+    native::usb_init();
+#endif
 }
 
 void usb_cleanup() {
+#ifndef DONT_USE_LIBUSB
     if (should_use_libusb()) {
         libusb::usb_cleanup();
     } else {
         native::usb_cleanup();
     }
+#else
+    native::usb_cleanup();
+#endif
 }
 
 int usb_write(usb_handle* h, const void* data, int len) {
+#ifndef DONT_USE_LIBUSB
     return should_use_libusb()
                ? libusb::usb_write(reinterpret_cast<libusb::usb_handle*>(h), data, len)
                : native::usb_write(reinterpret_cast<native::usb_handle*>(h), data, len);
+#else
+    return native::usb_write(reinterpret_cast<native::usb_handle*>(h), data, len);
+#endif
 }
 
 int usb_read(usb_handle* h, void* data, int len) {
+#ifndef DONT_USE_LIBUSB
     return should_use_libusb()
                ? libusb::usb_read(reinterpret_cast<libusb::usb_handle*>(h), data, len)
                : native::usb_read(reinterpret_cast<native::usb_handle*>(h), data, len);
+#else
+    return native::usb_read(reinterpret_cast<native::usb_handle*>(h), data, len);
+#endif
 }
 
 int usb_close(usb_handle* h) {
+#ifndef DONT_USE_LIBUSB
     return should_use_libusb() ? libusb::usb_close(reinterpret_cast<libusb::usb_handle*>(h))
                                : native::usb_close(reinterpret_cast<native::usb_handle*>(h));
+#else
+    return native::usb_close(reinterpret_cast<native::usb_handle*>(h));
+#endif
 }
 
 void usb_kick(usb_handle* h) {
+#ifndef DONT_USE_LIBUSB
     should_use_libusb() ? libusb::usb_kick(reinterpret_cast<libusb::usb_handle*>(h))
                         : native::usb_kick(reinterpret_cast<native::usb_handle*>(h));
+#else
+    native::usb_kick(reinterpret_cast<native::usb_handle*>(h));
+#endif
 }
 
 size_t usb_get_max_packet_size(usb_handle* h) {
+#ifndef DONT_USE_LIBUSB
     return should_use_libusb()
                ? libusb::usb_get_max_packet_size(reinterpret_cast<libusb::usb_handle*>(h))
                : native::usb_get_max_packet_size(reinterpret_cast<native::usb_handle*>(h));
+#else
+    return native::usb_get_max_packet_size(reinterpret_cast<native::usb_handle*>(h));
+#endif
 }

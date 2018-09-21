@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_BASE_STRINGS_H
-#define ANDROID_BASE_STRINGS_H
+#pragma once
 
 #include <sstream>
 #include <string>
@@ -57,17 +56,21 @@ extern template std::string Join(const std::vector<std::string>&, const std::str
 extern template std::string Join(const std::vector<const char*>&, const std::string&);
 
 // Tests whether 's' starts with 'prefix'.
+// TODO: string_view
 bool StartsWith(const std::string& s, const char* prefix);
 bool StartsWithIgnoreCase(const std::string& s, const char* prefix);
+bool StartsWith(const std::string& s, const std::string& prefix);
+bool StartsWithIgnoreCase(const std::string& s, const std::string& prefix);
 
 // Tests whether 's' ends with 'suffix'.
+// TODO: string_view
 bool EndsWith(const std::string& s, const char* suffix);
 bool EndsWithIgnoreCase(const std::string& s, const char* suffix);
+bool EndsWith(const std::string& s, const std::string& suffix);
+bool EndsWithIgnoreCase(const std::string& s, const std::string& suffix);
 
 // Tests whether 'lhs' equals 'rhs', ignoring case.
 bool EqualsIgnoreCase(const std::string& lhs, const std::string& rhs);
 
 }  // namespace base
 }  // namespace android
-
-#endif  // ANDROID_BASE_STRINGS_H

@@ -114,9 +114,11 @@ int adb_server_main(int is_daemon, const std::string& socket_spec, int ack_reply
     init_transport_registration();
     init_reconnect_handler();
 
+#ifndef DONT_USE_MDNS
     if (!getenv("ADB_MDNS") || strcmp(getenv("ADB_MDNS"), "0") != 0) {
         init_mdns_transport_discovery();
     }
+#endif
 
     if (!getenv("ADB_USB") || strcmp(getenv("ADB_USB"), "0") != 0) {
         usb_init();

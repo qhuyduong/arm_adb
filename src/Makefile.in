@@ -105,15 +105,18 @@ CONFIG_CLEAN_VPATH_FILES =
 am__installdirs = "$(DESTDIR)$(bindir)"
 PROGRAMS = $(bin_PROGRAMS)
 am__dirstamp = $(am__leading_dot)dirstamp
-am_adb_OBJECTS = adb-adb.$(OBJEXT) adb-adb_auth_host.$(OBJEXT) \
-	adb-adb_client.$(OBJEXT) adb-adb_io.$(OBJEXT) \
+am_adb_OBJECTS = adb-adb.$(OBJEXT) adb-adb_io.$(OBJEXT) \
 	adb-adb_listeners.$(OBJEXT) adb-adb_trace.$(OBJEXT) \
-	adb-adb_utils.$(OBJEXT) adb-bugreport.$(OBJEXT) \
+	adb-adb_unique_fd.$(OBJEXT) adb-adb_utils.$(OBJEXT) \
+	client/adb-bugreport.$(OBJEXT) client/adb-adb_client.$(OBJEXT) \
+	client/adb-auth.$(OBJEXT) client/adb-adb_install.$(OBJEXT) \
 	client/adb-main.$(OBJEXT) client/adb-usb_dispatch.$(OBJEXT) \
-	client/adb-usb_linux.$(OBJEXT) adb-commandline.$(OBJEXT) \
-	adb-console.$(OBJEXT) adb-diagnose_usb.$(OBJEXT) \
-	adb-fdevent.$(OBJEXT) adb-file_sync_client.$(OBJEXT) \
-	adb-line_printer.$(OBJEXT) \
+	client/adb-usb_linux.$(OBJEXT) \
+	client/adb-commandline.$(OBJEXT) client/adb-console.$(OBJEXT) \
+	client/adb-fastdeploy.$(OBJEXT) \
+	client/adb-fastdeploycallbacks.$(OBJEXT) adb-fdevent.$(OBJEXT) \
+	client/adb-file_sync_client.$(OBJEXT) \
+	client/adb-line_printer.$(OBJEXT) \
 	adb-shell_service_protocol.$(OBJEXT) adb-services.$(OBJEXT) \
 	adb-sockets.$(OBJEXT) adb-socket_spec.$(OBJEXT) \
 	adb-sysdeps_unix.$(OBJEXT) sysdeps/adb-errno.$(OBJEXT) \
@@ -121,8 +124,11 @@ am_adb_OBJECTS = adb-adb.$(OBJEXT) adb-adb_auth_host.$(OBJEXT) \
 	adb-transport_local.$(OBJEXT) adb-transport_usb.$(OBJEXT)
 adb_OBJECTS = $(am_adb_OBJECTS)
 adb_DEPENDENCIES = $(top_srcdir)/lib/libbase.la \
+	$(top_srcdir)/lib/libbuildversion.la \
 	$(top_srcdir)/lib/libcrypto_utils.la \
-	$(top_srcdir)/lib/libcutils.la $(top_srcdir)/lib/liblog.la
+	$(top_srcdir)/lib/libcutils.la \
+	$(top_srcdir)/lib/libdiagnose_usb.la \
+	$(top_srcdir)/lib/liblog.la
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
 am__v_lt_0 = --silent
@@ -313,18 +319,20 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-adb_SOURCES = adb.cpp adb_auth_host.cpp adb_client.cpp adb_io.cpp \
-	      adb_listeners.cpp adb_trace.cpp adb_utils.cpp bugreport.cpp \
-	      client/main.cpp client/usb_dispatch.cpp client/usb_linux.cpp \
-	      commandline.cpp console.cpp diagnose_usb.cpp fdevent.cpp \
-	      file_sync_client.cpp line_printer.cpp shell_service_protocol.cpp \
-	      services.cpp sockets.cpp socket_spec.cpp sysdeps_unix.cpp \
-	      sysdeps/errno.cpp sysdeps/posix/network.cpp transport.cpp \
-	      transport_local.cpp transport_usb.cpp
+adb_SOURCES = adb.cpp adb_io.cpp adb_listeners.cpp adb_trace.cpp adb_unique_fd.cpp \
+							adb_utils.cpp client/bugreport.cpp client/adb_client.cpp client/auth.cpp \
+							client/adb_install.cpp client/main.cpp client/usb_dispatch.cpp client/usb_linux.cpp \
+	client/commandline.cpp 						client/console.cpp client/fastdeploy.cpp client/fastdeploycallbacks.cpp \
+							fdevent.cpp client/file_sync_client.cpp client/line_printer.cpp \
+							shell_service_protocol.cpp services.cpp sockets.cpp socket_spec.cpp\
+							sysdeps_unix.cpp sysdeps/errno.cpp sysdeps/posix/network.cpp transport.cpp \
+	      			transport_local.cpp transport_usb.cpp
 
 adb_CXXFLAGS = -I$(includedir) -I$(top_srcdir)/include \
 	       -I$(top_srcdir)/lib/base/include \
-	       -I$(top_srcdir)/lib/libcrypto_utils/include -std=c++14 \
+				 -I$(top_srcdir)/lib/libbuildversion/include \
+				 -I$(top_srcdir)/lib/diagnose_usb/include \
+				 -I$(top_srcdir)/lib/libcrypto_utils/include -std=c++14 \
 	       -lcrypto -lpthread -lrt -DADB_HOST=1 -DHAVE_FORKEXEC=1 \
 	       -DHAVE_SYMLINKS -DHAVE_TERMIO_H -DHAVE_SYS_SOCKET_H \
 	       -DHAVE_OFF64_T -D_GNU_SOURCE -D_XOPEN_SOURCE -DHAVE_ANDROID_OS=1 \
@@ -333,8 +341,10 @@ adb_CXXFLAGS = -I$(includedir) -I$(top_srcdir)/include \
 	       -DDONT_USE_MDNS
 
 adb_LDADD = $(top_srcdir)/lib/libbase.la \
-	    $(top_srcdir)/lib/libcrypto_utils.la \
+			$(top_srcdir)/lib/libbuildversion.la \
+			$(top_srcdir)/lib/libcrypto_utils.la \
 	    $(top_srcdir)/lib/libcutils.la \
+	    $(top_srcdir)/lib/libdiagnose_usb.la \
 	    $(top_srcdir)/lib/liblog.la
 
 adb_LDFLAGS = -static -L$(libdir)
@@ -426,11 +436,31 @@ client/$(am__dirstamp):
 client/$(DEPDIR)/$(am__dirstamp):
 	@$(MKDIR_P) client/$(DEPDIR)
 	@: > client/$(DEPDIR)/$(am__dirstamp)
+client/adb-bugreport.$(OBJEXT): client/$(am__dirstamp) \
+	client/$(DEPDIR)/$(am__dirstamp)
+client/adb-adb_client.$(OBJEXT): client/$(am__dirstamp) \
+	client/$(DEPDIR)/$(am__dirstamp)
+client/adb-auth.$(OBJEXT): client/$(am__dirstamp) \
+	client/$(DEPDIR)/$(am__dirstamp)
+client/adb-adb_install.$(OBJEXT): client/$(am__dirstamp) \
+	client/$(DEPDIR)/$(am__dirstamp)
 client/adb-main.$(OBJEXT): client/$(am__dirstamp) \
 	client/$(DEPDIR)/$(am__dirstamp)
 client/adb-usb_dispatch.$(OBJEXT): client/$(am__dirstamp) \
 	client/$(DEPDIR)/$(am__dirstamp)
 client/adb-usb_linux.$(OBJEXT): client/$(am__dirstamp) \
+	client/$(DEPDIR)/$(am__dirstamp)
+client/adb-commandline.$(OBJEXT): client/$(am__dirstamp) \
+	client/$(DEPDIR)/$(am__dirstamp)
+client/adb-console.$(OBJEXT): client/$(am__dirstamp) \
+	client/$(DEPDIR)/$(am__dirstamp)
+client/adb-fastdeploy.$(OBJEXT): client/$(am__dirstamp) \
+	client/$(DEPDIR)/$(am__dirstamp)
+client/adb-fastdeploycallbacks.$(OBJEXT): client/$(am__dirstamp) \
+	client/$(DEPDIR)/$(am__dirstamp)
+client/adb-file_sync_client.$(OBJEXT): client/$(am__dirstamp) \
+	client/$(DEPDIR)/$(am__dirstamp)
+client/adb-line_printer.$(OBJEXT): client/$(am__dirstamp) \
 	client/$(DEPDIR)/$(am__dirstamp)
 sysdeps/$(am__dirstamp):
 	@$(MKDIR_P) sysdeps
@@ -463,19 +493,12 @@ distclean-compile:
 	-rm -f *.tab.c
 
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-adb.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-adb_auth_host.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-adb_client.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-adb_io.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-adb_listeners.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-adb_trace.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-adb_unique_fd.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-adb_utils.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-bugreport.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-commandline.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-console.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-diagnose_usb.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-fdevent.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-file_sync_client.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-line_printer.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-services.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-shell_service_protocol.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-socket_spec.Po@am__quote@
@@ -484,6 +507,16 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-transport.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-transport_local.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/adb-transport_usb.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@client/$(DEPDIR)/adb-adb_client.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@client/$(DEPDIR)/adb-adb_install.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@client/$(DEPDIR)/adb-auth.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@client/$(DEPDIR)/adb-bugreport.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@client/$(DEPDIR)/adb-commandline.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@client/$(DEPDIR)/adb-console.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@client/$(DEPDIR)/adb-fastdeploy.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@client/$(DEPDIR)/adb-fastdeploycallbacks.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@client/$(DEPDIR)/adb-file_sync_client.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@client/$(DEPDIR)/adb-line_printer.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@client/$(DEPDIR)/adb-main.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@client/$(DEPDIR)/adb-usb_dispatch.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@client/$(DEPDIR)/adb-usb_linux.Po@am__quote@
@@ -528,34 +561,6 @@ adb-adb.obj: adb.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-adb.obj `if test -f 'adb.cpp'; then $(CYGPATH_W) 'adb.cpp'; else $(CYGPATH_W) '$(srcdir)/adb.cpp'; fi`
 
-adb-adb_auth_host.o: adb_auth_host.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-adb_auth_host.o -MD -MP -MF $(DEPDIR)/adb-adb_auth_host.Tpo -c -o adb-adb_auth_host.o `test -f 'adb_auth_host.cpp' || echo '$(srcdir)/'`adb_auth_host.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-adb_auth_host.Tpo $(DEPDIR)/adb-adb_auth_host.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='adb_auth_host.cpp' object='adb-adb_auth_host.o' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-adb_auth_host.o `test -f 'adb_auth_host.cpp' || echo '$(srcdir)/'`adb_auth_host.cpp
-
-adb-adb_auth_host.obj: adb_auth_host.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-adb_auth_host.obj -MD -MP -MF $(DEPDIR)/adb-adb_auth_host.Tpo -c -o adb-adb_auth_host.obj `if test -f 'adb_auth_host.cpp'; then $(CYGPATH_W) 'adb_auth_host.cpp'; else $(CYGPATH_W) '$(srcdir)/adb_auth_host.cpp'; fi`
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-adb_auth_host.Tpo $(DEPDIR)/adb-adb_auth_host.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='adb_auth_host.cpp' object='adb-adb_auth_host.obj' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-adb_auth_host.obj `if test -f 'adb_auth_host.cpp'; then $(CYGPATH_W) 'adb_auth_host.cpp'; else $(CYGPATH_W) '$(srcdir)/adb_auth_host.cpp'; fi`
-
-adb-adb_client.o: adb_client.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-adb_client.o -MD -MP -MF $(DEPDIR)/adb-adb_client.Tpo -c -o adb-adb_client.o `test -f 'adb_client.cpp' || echo '$(srcdir)/'`adb_client.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-adb_client.Tpo $(DEPDIR)/adb-adb_client.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='adb_client.cpp' object='adb-adb_client.o' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-adb_client.o `test -f 'adb_client.cpp' || echo '$(srcdir)/'`adb_client.cpp
-
-adb-adb_client.obj: adb_client.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-adb_client.obj -MD -MP -MF $(DEPDIR)/adb-adb_client.Tpo -c -o adb-adb_client.obj `if test -f 'adb_client.cpp'; then $(CYGPATH_W) 'adb_client.cpp'; else $(CYGPATH_W) '$(srcdir)/adb_client.cpp'; fi`
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-adb_client.Tpo $(DEPDIR)/adb-adb_client.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='adb_client.cpp' object='adb-adb_client.obj' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-adb_client.obj `if test -f 'adb_client.cpp'; then $(CYGPATH_W) 'adb_client.cpp'; else $(CYGPATH_W) '$(srcdir)/adb_client.cpp'; fi`
-
 adb-adb_io.o: adb_io.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-adb_io.o -MD -MP -MF $(DEPDIR)/adb-adb_io.Tpo -c -o adb-adb_io.o `test -f 'adb_io.cpp' || echo '$(srcdir)/'`adb_io.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-adb_io.Tpo $(DEPDIR)/adb-adb_io.Po
@@ -598,6 +603,20 @@ adb-adb_trace.obj: adb_trace.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-adb_trace.obj `if test -f 'adb_trace.cpp'; then $(CYGPATH_W) 'adb_trace.cpp'; else $(CYGPATH_W) '$(srcdir)/adb_trace.cpp'; fi`
 
+adb-adb_unique_fd.o: adb_unique_fd.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-adb_unique_fd.o -MD -MP -MF $(DEPDIR)/adb-adb_unique_fd.Tpo -c -o adb-adb_unique_fd.o `test -f 'adb_unique_fd.cpp' || echo '$(srcdir)/'`adb_unique_fd.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-adb_unique_fd.Tpo $(DEPDIR)/adb-adb_unique_fd.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='adb_unique_fd.cpp' object='adb-adb_unique_fd.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-adb_unique_fd.o `test -f 'adb_unique_fd.cpp' || echo '$(srcdir)/'`adb_unique_fd.cpp
+
+adb-adb_unique_fd.obj: adb_unique_fd.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-adb_unique_fd.obj -MD -MP -MF $(DEPDIR)/adb-adb_unique_fd.Tpo -c -o adb-adb_unique_fd.obj `if test -f 'adb_unique_fd.cpp'; then $(CYGPATH_W) 'adb_unique_fd.cpp'; else $(CYGPATH_W) '$(srcdir)/adb_unique_fd.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-adb_unique_fd.Tpo $(DEPDIR)/adb-adb_unique_fd.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='adb_unique_fd.cpp' object='adb-adb_unique_fd.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-adb_unique_fd.obj `if test -f 'adb_unique_fd.cpp'; then $(CYGPATH_W) 'adb_unique_fd.cpp'; else $(CYGPATH_W) '$(srcdir)/adb_unique_fd.cpp'; fi`
+
 adb-adb_utils.o: adb_utils.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-adb_utils.o -MD -MP -MF $(DEPDIR)/adb-adb_utils.Tpo -c -o adb-adb_utils.o `test -f 'adb_utils.cpp' || echo '$(srcdir)/'`adb_utils.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-adb_utils.Tpo $(DEPDIR)/adb-adb_utils.Po
@@ -612,19 +631,61 @@ adb-adb_utils.obj: adb_utils.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-adb_utils.obj `if test -f 'adb_utils.cpp'; then $(CYGPATH_W) 'adb_utils.cpp'; else $(CYGPATH_W) '$(srcdir)/adb_utils.cpp'; fi`
 
-adb-bugreport.o: bugreport.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-bugreport.o -MD -MP -MF $(DEPDIR)/adb-bugreport.Tpo -c -o adb-bugreport.o `test -f 'bugreport.cpp' || echo '$(srcdir)/'`bugreport.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-bugreport.Tpo $(DEPDIR)/adb-bugreport.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='bugreport.cpp' object='adb-bugreport.o' libtool=no @AMDEPBACKSLASH@
+client/adb-bugreport.o: client/bugreport.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-bugreport.o -MD -MP -MF client/$(DEPDIR)/adb-bugreport.Tpo -c -o client/adb-bugreport.o `test -f 'client/bugreport.cpp' || echo '$(srcdir)/'`client/bugreport.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-bugreport.Tpo client/$(DEPDIR)/adb-bugreport.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/bugreport.cpp' object='client/adb-bugreport.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-bugreport.o `test -f 'bugreport.cpp' || echo '$(srcdir)/'`bugreport.cpp
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-bugreport.o `test -f 'client/bugreport.cpp' || echo '$(srcdir)/'`client/bugreport.cpp
 
-adb-bugreport.obj: bugreport.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-bugreport.obj -MD -MP -MF $(DEPDIR)/adb-bugreport.Tpo -c -o adb-bugreport.obj `if test -f 'bugreport.cpp'; then $(CYGPATH_W) 'bugreport.cpp'; else $(CYGPATH_W) '$(srcdir)/bugreport.cpp'; fi`
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-bugreport.Tpo $(DEPDIR)/adb-bugreport.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='bugreport.cpp' object='adb-bugreport.obj' libtool=no @AMDEPBACKSLASH@
+client/adb-bugreport.obj: client/bugreport.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-bugreport.obj -MD -MP -MF client/$(DEPDIR)/adb-bugreport.Tpo -c -o client/adb-bugreport.obj `if test -f 'client/bugreport.cpp'; then $(CYGPATH_W) 'client/bugreport.cpp'; else $(CYGPATH_W) '$(srcdir)/client/bugreport.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-bugreport.Tpo client/$(DEPDIR)/adb-bugreport.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/bugreport.cpp' object='client/adb-bugreport.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-bugreport.obj `if test -f 'bugreport.cpp'; then $(CYGPATH_W) 'bugreport.cpp'; else $(CYGPATH_W) '$(srcdir)/bugreport.cpp'; fi`
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-bugreport.obj `if test -f 'client/bugreport.cpp'; then $(CYGPATH_W) 'client/bugreport.cpp'; else $(CYGPATH_W) '$(srcdir)/client/bugreport.cpp'; fi`
+
+client/adb-adb_client.o: client/adb_client.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-adb_client.o -MD -MP -MF client/$(DEPDIR)/adb-adb_client.Tpo -c -o client/adb-adb_client.o `test -f 'client/adb_client.cpp' || echo '$(srcdir)/'`client/adb_client.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-adb_client.Tpo client/$(DEPDIR)/adb-adb_client.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/adb_client.cpp' object='client/adb-adb_client.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-adb_client.o `test -f 'client/adb_client.cpp' || echo '$(srcdir)/'`client/adb_client.cpp
+
+client/adb-adb_client.obj: client/adb_client.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-adb_client.obj -MD -MP -MF client/$(DEPDIR)/adb-adb_client.Tpo -c -o client/adb-adb_client.obj `if test -f 'client/adb_client.cpp'; then $(CYGPATH_W) 'client/adb_client.cpp'; else $(CYGPATH_W) '$(srcdir)/client/adb_client.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-adb_client.Tpo client/$(DEPDIR)/adb-adb_client.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/adb_client.cpp' object='client/adb-adb_client.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-adb_client.obj `if test -f 'client/adb_client.cpp'; then $(CYGPATH_W) 'client/adb_client.cpp'; else $(CYGPATH_W) '$(srcdir)/client/adb_client.cpp'; fi`
+
+client/adb-auth.o: client/auth.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-auth.o -MD -MP -MF client/$(DEPDIR)/adb-auth.Tpo -c -o client/adb-auth.o `test -f 'client/auth.cpp' || echo '$(srcdir)/'`client/auth.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-auth.Tpo client/$(DEPDIR)/adb-auth.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/auth.cpp' object='client/adb-auth.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-auth.o `test -f 'client/auth.cpp' || echo '$(srcdir)/'`client/auth.cpp
+
+client/adb-auth.obj: client/auth.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-auth.obj -MD -MP -MF client/$(DEPDIR)/adb-auth.Tpo -c -o client/adb-auth.obj `if test -f 'client/auth.cpp'; then $(CYGPATH_W) 'client/auth.cpp'; else $(CYGPATH_W) '$(srcdir)/client/auth.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-auth.Tpo client/$(DEPDIR)/adb-auth.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/auth.cpp' object='client/adb-auth.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-auth.obj `if test -f 'client/auth.cpp'; then $(CYGPATH_W) 'client/auth.cpp'; else $(CYGPATH_W) '$(srcdir)/client/auth.cpp'; fi`
+
+client/adb-adb_install.o: client/adb_install.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-adb_install.o -MD -MP -MF client/$(DEPDIR)/adb-adb_install.Tpo -c -o client/adb-adb_install.o `test -f 'client/adb_install.cpp' || echo '$(srcdir)/'`client/adb_install.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-adb_install.Tpo client/$(DEPDIR)/adb-adb_install.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/adb_install.cpp' object='client/adb-adb_install.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-adb_install.o `test -f 'client/adb_install.cpp' || echo '$(srcdir)/'`client/adb_install.cpp
+
+client/adb-adb_install.obj: client/adb_install.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-adb_install.obj -MD -MP -MF client/$(DEPDIR)/adb-adb_install.Tpo -c -o client/adb-adb_install.obj `if test -f 'client/adb_install.cpp'; then $(CYGPATH_W) 'client/adb_install.cpp'; else $(CYGPATH_W) '$(srcdir)/client/adb_install.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-adb_install.Tpo client/$(DEPDIR)/adb-adb_install.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/adb_install.cpp' object='client/adb-adb_install.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-adb_install.obj `if test -f 'client/adb_install.cpp'; then $(CYGPATH_W) 'client/adb_install.cpp'; else $(CYGPATH_W) '$(srcdir)/client/adb_install.cpp'; fi`
 
 client/adb-main.o: client/main.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-main.o -MD -MP -MF client/$(DEPDIR)/adb-main.Tpo -c -o client/adb-main.o `test -f 'client/main.cpp' || echo '$(srcdir)/'`client/main.cpp
@@ -668,47 +729,61 @@ client/adb-usb_linux.obj: client/usb_linux.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-usb_linux.obj `if test -f 'client/usb_linux.cpp'; then $(CYGPATH_W) 'client/usb_linux.cpp'; else $(CYGPATH_W) '$(srcdir)/client/usb_linux.cpp'; fi`
 
-adb-commandline.o: commandline.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-commandline.o -MD -MP -MF $(DEPDIR)/adb-commandline.Tpo -c -o adb-commandline.o `test -f 'commandline.cpp' || echo '$(srcdir)/'`commandline.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-commandline.Tpo $(DEPDIR)/adb-commandline.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='commandline.cpp' object='adb-commandline.o' libtool=no @AMDEPBACKSLASH@
+client/adb-commandline.o: client/commandline.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-commandline.o -MD -MP -MF client/$(DEPDIR)/adb-commandline.Tpo -c -o client/adb-commandline.o `test -f 'client/commandline.cpp' || echo '$(srcdir)/'`client/commandline.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-commandline.Tpo client/$(DEPDIR)/adb-commandline.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/commandline.cpp' object='client/adb-commandline.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-commandline.o `test -f 'commandline.cpp' || echo '$(srcdir)/'`commandline.cpp
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-commandline.o `test -f 'client/commandline.cpp' || echo '$(srcdir)/'`client/commandline.cpp
 
-adb-commandline.obj: commandline.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-commandline.obj -MD -MP -MF $(DEPDIR)/adb-commandline.Tpo -c -o adb-commandline.obj `if test -f 'commandline.cpp'; then $(CYGPATH_W) 'commandline.cpp'; else $(CYGPATH_W) '$(srcdir)/commandline.cpp'; fi`
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-commandline.Tpo $(DEPDIR)/adb-commandline.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='commandline.cpp' object='adb-commandline.obj' libtool=no @AMDEPBACKSLASH@
+client/adb-commandline.obj: client/commandline.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-commandline.obj -MD -MP -MF client/$(DEPDIR)/adb-commandline.Tpo -c -o client/adb-commandline.obj `if test -f 'client/commandline.cpp'; then $(CYGPATH_W) 'client/commandline.cpp'; else $(CYGPATH_W) '$(srcdir)/client/commandline.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-commandline.Tpo client/$(DEPDIR)/adb-commandline.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/commandline.cpp' object='client/adb-commandline.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-commandline.obj `if test -f 'commandline.cpp'; then $(CYGPATH_W) 'commandline.cpp'; else $(CYGPATH_W) '$(srcdir)/commandline.cpp'; fi`
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-commandline.obj `if test -f 'client/commandline.cpp'; then $(CYGPATH_W) 'client/commandline.cpp'; else $(CYGPATH_W) '$(srcdir)/client/commandline.cpp'; fi`
 
-adb-console.o: console.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-console.o -MD -MP -MF $(DEPDIR)/adb-console.Tpo -c -o adb-console.o `test -f 'console.cpp' || echo '$(srcdir)/'`console.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-console.Tpo $(DEPDIR)/adb-console.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='console.cpp' object='adb-console.o' libtool=no @AMDEPBACKSLASH@
+client/adb-console.o: client/console.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-console.o -MD -MP -MF client/$(DEPDIR)/adb-console.Tpo -c -o client/adb-console.o `test -f 'client/console.cpp' || echo '$(srcdir)/'`client/console.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-console.Tpo client/$(DEPDIR)/adb-console.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/console.cpp' object='client/adb-console.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-console.o `test -f 'console.cpp' || echo '$(srcdir)/'`console.cpp
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-console.o `test -f 'client/console.cpp' || echo '$(srcdir)/'`client/console.cpp
 
-adb-console.obj: console.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-console.obj -MD -MP -MF $(DEPDIR)/adb-console.Tpo -c -o adb-console.obj `if test -f 'console.cpp'; then $(CYGPATH_W) 'console.cpp'; else $(CYGPATH_W) '$(srcdir)/console.cpp'; fi`
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-console.Tpo $(DEPDIR)/adb-console.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='console.cpp' object='adb-console.obj' libtool=no @AMDEPBACKSLASH@
+client/adb-console.obj: client/console.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-console.obj -MD -MP -MF client/$(DEPDIR)/adb-console.Tpo -c -o client/adb-console.obj `if test -f 'client/console.cpp'; then $(CYGPATH_W) 'client/console.cpp'; else $(CYGPATH_W) '$(srcdir)/client/console.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-console.Tpo client/$(DEPDIR)/adb-console.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/console.cpp' object='client/adb-console.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-console.obj `if test -f 'console.cpp'; then $(CYGPATH_W) 'console.cpp'; else $(CYGPATH_W) '$(srcdir)/console.cpp'; fi`
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-console.obj `if test -f 'client/console.cpp'; then $(CYGPATH_W) 'client/console.cpp'; else $(CYGPATH_W) '$(srcdir)/client/console.cpp'; fi`
 
-adb-diagnose_usb.o: diagnose_usb.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-diagnose_usb.o -MD -MP -MF $(DEPDIR)/adb-diagnose_usb.Tpo -c -o adb-diagnose_usb.o `test -f 'diagnose_usb.cpp' || echo '$(srcdir)/'`diagnose_usb.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-diagnose_usb.Tpo $(DEPDIR)/adb-diagnose_usb.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='diagnose_usb.cpp' object='adb-diagnose_usb.o' libtool=no @AMDEPBACKSLASH@
+client/adb-fastdeploy.o: client/fastdeploy.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-fastdeploy.o -MD -MP -MF client/$(DEPDIR)/adb-fastdeploy.Tpo -c -o client/adb-fastdeploy.o `test -f 'client/fastdeploy.cpp' || echo '$(srcdir)/'`client/fastdeploy.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-fastdeploy.Tpo client/$(DEPDIR)/adb-fastdeploy.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/fastdeploy.cpp' object='client/adb-fastdeploy.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-diagnose_usb.o `test -f 'diagnose_usb.cpp' || echo '$(srcdir)/'`diagnose_usb.cpp
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-fastdeploy.o `test -f 'client/fastdeploy.cpp' || echo '$(srcdir)/'`client/fastdeploy.cpp
 
-adb-diagnose_usb.obj: diagnose_usb.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-diagnose_usb.obj -MD -MP -MF $(DEPDIR)/adb-diagnose_usb.Tpo -c -o adb-diagnose_usb.obj `if test -f 'diagnose_usb.cpp'; then $(CYGPATH_W) 'diagnose_usb.cpp'; else $(CYGPATH_W) '$(srcdir)/diagnose_usb.cpp'; fi`
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-diagnose_usb.Tpo $(DEPDIR)/adb-diagnose_usb.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='diagnose_usb.cpp' object='adb-diagnose_usb.obj' libtool=no @AMDEPBACKSLASH@
+client/adb-fastdeploy.obj: client/fastdeploy.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-fastdeploy.obj -MD -MP -MF client/$(DEPDIR)/adb-fastdeploy.Tpo -c -o client/adb-fastdeploy.obj `if test -f 'client/fastdeploy.cpp'; then $(CYGPATH_W) 'client/fastdeploy.cpp'; else $(CYGPATH_W) '$(srcdir)/client/fastdeploy.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-fastdeploy.Tpo client/$(DEPDIR)/adb-fastdeploy.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/fastdeploy.cpp' object='client/adb-fastdeploy.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-diagnose_usb.obj `if test -f 'diagnose_usb.cpp'; then $(CYGPATH_W) 'diagnose_usb.cpp'; else $(CYGPATH_W) '$(srcdir)/diagnose_usb.cpp'; fi`
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-fastdeploy.obj `if test -f 'client/fastdeploy.cpp'; then $(CYGPATH_W) 'client/fastdeploy.cpp'; else $(CYGPATH_W) '$(srcdir)/client/fastdeploy.cpp'; fi`
+
+client/adb-fastdeploycallbacks.o: client/fastdeploycallbacks.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-fastdeploycallbacks.o -MD -MP -MF client/$(DEPDIR)/adb-fastdeploycallbacks.Tpo -c -o client/adb-fastdeploycallbacks.o `test -f 'client/fastdeploycallbacks.cpp' || echo '$(srcdir)/'`client/fastdeploycallbacks.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-fastdeploycallbacks.Tpo client/$(DEPDIR)/adb-fastdeploycallbacks.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/fastdeploycallbacks.cpp' object='client/adb-fastdeploycallbacks.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-fastdeploycallbacks.o `test -f 'client/fastdeploycallbacks.cpp' || echo '$(srcdir)/'`client/fastdeploycallbacks.cpp
+
+client/adb-fastdeploycallbacks.obj: client/fastdeploycallbacks.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-fastdeploycallbacks.obj -MD -MP -MF client/$(DEPDIR)/adb-fastdeploycallbacks.Tpo -c -o client/adb-fastdeploycallbacks.obj `if test -f 'client/fastdeploycallbacks.cpp'; then $(CYGPATH_W) 'client/fastdeploycallbacks.cpp'; else $(CYGPATH_W) '$(srcdir)/client/fastdeploycallbacks.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-fastdeploycallbacks.Tpo client/$(DEPDIR)/adb-fastdeploycallbacks.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/fastdeploycallbacks.cpp' object='client/adb-fastdeploycallbacks.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-fastdeploycallbacks.obj `if test -f 'client/fastdeploycallbacks.cpp'; then $(CYGPATH_W) 'client/fastdeploycallbacks.cpp'; else $(CYGPATH_W) '$(srcdir)/client/fastdeploycallbacks.cpp'; fi`
 
 adb-fdevent.o: fdevent.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-fdevent.o -MD -MP -MF $(DEPDIR)/adb-fdevent.Tpo -c -o adb-fdevent.o `test -f 'fdevent.cpp' || echo '$(srcdir)/'`fdevent.cpp
@@ -724,33 +799,33 @@ adb-fdevent.obj: fdevent.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-fdevent.obj `if test -f 'fdevent.cpp'; then $(CYGPATH_W) 'fdevent.cpp'; else $(CYGPATH_W) '$(srcdir)/fdevent.cpp'; fi`
 
-adb-file_sync_client.o: file_sync_client.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-file_sync_client.o -MD -MP -MF $(DEPDIR)/adb-file_sync_client.Tpo -c -o adb-file_sync_client.o `test -f 'file_sync_client.cpp' || echo '$(srcdir)/'`file_sync_client.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-file_sync_client.Tpo $(DEPDIR)/adb-file_sync_client.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='file_sync_client.cpp' object='adb-file_sync_client.o' libtool=no @AMDEPBACKSLASH@
+client/adb-file_sync_client.o: client/file_sync_client.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-file_sync_client.o -MD -MP -MF client/$(DEPDIR)/adb-file_sync_client.Tpo -c -o client/adb-file_sync_client.o `test -f 'client/file_sync_client.cpp' || echo '$(srcdir)/'`client/file_sync_client.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-file_sync_client.Tpo client/$(DEPDIR)/adb-file_sync_client.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/file_sync_client.cpp' object='client/adb-file_sync_client.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-file_sync_client.o `test -f 'file_sync_client.cpp' || echo '$(srcdir)/'`file_sync_client.cpp
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-file_sync_client.o `test -f 'client/file_sync_client.cpp' || echo '$(srcdir)/'`client/file_sync_client.cpp
 
-adb-file_sync_client.obj: file_sync_client.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-file_sync_client.obj -MD -MP -MF $(DEPDIR)/adb-file_sync_client.Tpo -c -o adb-file_sync_client.obj `if test -f 'file_sync_client.cpp'; then $(CYGPATH_W) 'file_sync_client.cpp'; else $(CYGPATH_W) '$(srcdir)/file_sync_client.cpp'; fi`
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-file_sync_client.Tpo $(DEPDIR)/adb-file_sync_client.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='file_sync_client.cpp' object='adb-file_sync_client.obj' libtool=no @AMDEPBACKSLASH@
+client/adb-file_sync_client.obj: client/file_sync_client.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-file_sync_client.obj -MD -MP -MF client/$(DEPDIR)/adb-file_sync_client.Tpo -c -o client/adb-file_sync_client.obj `if test -f 'client/file_sync_client.cpp'; then $(CYGPATH_W) 'client/file_sync_client.cpp'; else $(CYGPATH_W) '$(srcdir)/client/file_sync_client.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-file_sync_client.Tpo client/$(DEPDIR)/adb-file_sync_client.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/file_sync_client.cpp' object='client/adb-file_sync_client.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-file_sync_client.obj `if test -f 'file_sync_client.cpp'; then $(CYGPATH_W) 'file_sync_client.cpp'; else $(CYGPATH_W) '$(srcdir)/file_sync_client.cpp'; fi`
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-file_sync_client.obj `if test -f 'client/file_sync_client.cpp'; then $(CYGPATH_W) 'client/file_sync_client.cpp'; else $(CYGPATH_W) '$(srcdir)/client/file_sync_client.cpp'; fi`
 
-adb-line_printer.o: line_printer.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-line_printer.o -MD -MP -MF $(DEPDIR)/adb-line_printer.Tpo -c -o adb-line_printer.o `test -f 'line_printer.cpp' || echo '$(srcdir)/'`line_printer.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-line_printer.Tpo $(DEPDIR)/adb-line_printer.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='line_printer.cpp' object='adb-line_printer.o' libtool=no @AMDEPBACKSLASH@
+client/adb-line_printer.o: client/line_printer.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-line_printer.o -MD -MP -MF client/$(DEPDIR)/adb-line_printer.Tpo -c -o client/adb-line_printer.o `test -f 'client/line_printer.cpp' || echo '$(srcdir)/'`client/line_printer.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-line_printer.Tpo client/$(DEPDIR)/adb-line_printer.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/line_printer.cpp' object='client/adb-line_printer.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-line_printer.o `test -f 'line_printer.cpp' || echo '$(srcdir)/'`line_printer.cpp
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-line_printer.o `test -f 'client/line_printer.cpp' || echo '$(srcdir)/'`client/line_printer.cpp
 
-adb-line_printer.obj: line_printer.cpp
-@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-line_printer.obj -MD -MP -MF $(DEPDIR)/adb-line_printer.Tpo -c -o adb-line_printer.obj `if test -f 'line_printer.cpp'; then $(CYGPATH_W) 'line_printer.cpp'; else $(CYGPATH_W) '$(srcdir)/line_printer.cpp'; fi`
-@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/adb-line_printer.Tpo $(DEPDIR)/adb-line_printer.Po
-@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='line_printer.cpp' object='adb-line_printer.obj' libtool=no @AMDEPBACKSLASH@
+client/adb-line_printer.obj: client/line_printer.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT client/adb-line_printer.obj -MD -MP -MF client/$(DEPDIR)/adb-line_printer.Tpo -c -o client/adb-line_printer.obj `if test -f 'client/line_printer.cpp'; then $(CYGPATH_W) 'client/line_printer.cpp'; else $(CYGPATH_W) '$(srcdir)/client/line_printer.cpp'; fi`
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) client/$(DEPDIR)/adb-line_printer.Tpo client/$(DEPDIR)/adb-line_printer.Po
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='client/line_printer.cpp' object='client/adb-line_printer.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o adb-line_printer.obj `if test -f 'line_printer.cpp'; then $(CYGPATH_W) 'line_printer.cpp'; else $(CYGPATH_W) '$(srcdir)/line_printer.cpp'; fi`
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -c -o client/adb-line_printer.obj `if test -f 'client/line_printer.cpp'; then $(CYGPATH_W) 'client/line_printer.cpp'; else $(CYGPATH_W) '$(srcdir)/client/line_printer.cpp'; fi`
 
 adb-shell_service_protocol.o: shell_service_protocol.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(adb_CXXFLAGS) $(CXXFLAGS) -MT adb-shell_service_protocol.o -MD -MP -MF $(DEPDIR)/adb-shell_service_protocol.Tpo -c -o adb-shell_service_protocol.o `test -f 'shell_service_protocol.cpp' || echo '$(srcdir)/'`shell_service_protocol.cpp

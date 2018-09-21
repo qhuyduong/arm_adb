@@ -1,8 +1,9 @@
-lib_LTLIBRARIES = libbase.la libbuildversion.la libcrypto_utils.la libcutils.la liblog.la
+lib_LTLIBRARIES = libbase.la libbuildversion.la libcrypto_utils.la libcutils.la liblog.la libdiagnose_usb.la
 
 libbase_la_SOURCES = base/file.cpp base/stringprintf.cpp \
 		     base/strings.cpp base/logging.cpp \
-		     base/parsenetaddress.cpp
+		     base/parsenetaddress.cpp base/test_utils.cpp \
+				 base/threads.cpp
 libbase_la_CXXFLAGS = -I$(includedir) -I$(top_srcdir)/include \
 		      -I$(top_srcdir)/lib/base/include \
 		      -std=c++11
@@ -33,3 +34,8 @@ liblog_la_CFLAGS = -I$(includedir) -I$(top_srcdir)/include \
 		   -I$(top_srcdir)/lib/base/include -std=c99 \
 		   -DLIBLOG_LOG_TAG=1005 -DFAKE_LOG_DEVICE=1 \
 		   -D_POSIX_C_SOURCE=199309L
+
+libdiagnose_usb_la_SOURCES = diagnose_usb/diagnose_usb.cpp
+libdiagnose_usb_la_CXXFLAGS = -I$(includedir) -I$(top_srcdir)/include -std=c++11 \
+															-I$(top_srcdir)/lib/diagnose_usb/include \
+															-I$(top_srcdir)/lib/base/include

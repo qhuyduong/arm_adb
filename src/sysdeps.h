@@ -39,11 +39,11 @@
 #include "sysdeps/network.h"
 #include "sysdeps/stat.h"
 
-#ifdef _WIN32
-
 // Clang-only nullability specifiers
 #define _Nonnull
 #define _Nullable
+
+#ifdef _WIN32
 
 #include <ctype.h>
 #include <direct.h>

@@ -134,7 +134,8 @@ libbase_la_LIBADD =
 am__dirstamp = $(am__leading_dot)dirstamp
 am_libbase_la_OBJECTS = base/libbase_la-file.lo \
 	base/libbase_la-stringprintf.lo base/libbase_la-strings.lo \
-	base/libbase_la-logging.lo base/libbase_la-parsenetaddress.lo
+	base/libbase_la-logging.lo base/libbase_la-parsenetaddress.lo \
+	base/libbase_la-test_utils.lo base/libbase_la-threads.lo
 libbase_la_OBJECTS = $(am_libbase_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
@@ -143,6 +144,14 @@ am__v_lt_1 =
 libbase_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(libbase_la_CXXFLAGS) \
 	$(CXXFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
+libbuildversion_la_LIBADD =
+am_libbuildversion_la_OBJECTS =  \
+	libbuildversion/libbuildversion_la-libbuildversion.lo
+libbuildversion_la_OBJECTS = $(am_libbuildversion_la_OBJECTS)
+libbuildversion_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CXX \
+	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CXXLD) \
+	$(libbuildversion_la_CXXFLAGS) $(CXXFLAGS) $(AM_LDFLAGS) \
+	$(LDFLAGS) -o $@
 libcrypto_utils_la_LIBADD =
 am_libcrypto_utils_la_OBJECTS =  \
 	libcrypto_utils/libcrypto_utils_la-android_pubkey.lo
@@ -164,6 +173,14 @@ libcutils_la_OBJECTS = $(am_libcutils_la_OBJECTS)
 libcutils_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(libcutils_la_CXXFLAGS) \
 	$(CXXFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
+libdiagnose_usb_la_LIBADD =
+am_libdiagnose_usb_la_OBJECTS =  \
+	diagnose_usb/libdiagnose_usb_la-diagnose_usb.lo
+libdiagnose_usb_la_OBJECTS = $(am_libdiagnose_usb_la_OBJECTS)
+libdiagnose_usb_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CXX \
+	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CXXLD) \
+	$(libdiagnose_usb_la_CXXFLAGS) $(CXXFLAGS) $(AM_LDFLAGS) \
+	$(LDFLAGS) -o $@
 liblog_la_LIBADD =
 am_liblog_la_OBJECTS = liblog/liblog_la-logd_write.lo \
 	liblog/liblog_la-log_event_write.lo \
@@ -224,10 +241,12 @@ AM_V_CXXLD = $(am__v_CXXLD_@AM_V@)
 am__v_CXXLD_ = $(am__v_CXXLD_@AM_DEFAULT_V@)
 am__v_CXXLD_0 = @echo "  CXXLD   " $@;
 am__v_CXXLD_1 = 
-SOURCES = $(libbase_la_SOURCES) $(libcrypto_utils_la_SOURCES) \
-	$(libcutils_la_SOURCES) $(liblog_la_SOURCES)
-DIST_SOURCES = $(libbase_la_SOURCES) $(libcrypto_utils_la_SOURCES) \
-	$(libcutils_la_SOURCES) $(liblog_la_SOURCES)
+SOURCES = $(libbase_la_SOURCES) $(libbuildversion_la_SOURCES) \
+	$(libcrypto_utils_la_SOURCES) $(libcutils_la_SOURCES) \
+	$(libdiagnose_usb_la_SOURCES) $(liblog_la_SOURCES)
+DIST_SOURCES = $(libbase_la_SOURCES) $(libbuildversion_la_SOURCES) \
+	$(libcrypto_utils_la_SOURCES) $(libcutils_la_SOURCES) \
+	$(libdiagnose_usb_la_SOURCES) $(liblog_la_SOURCES)
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
@@ -375,14 +394,20 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-lib_LTLIBRARIES = libbase.la libcrypto_utils.la libcutils.la liblog.la
+lib_LTLIBRARIES = libbase.la libbuildversion.la libcrypto_utils.la libcutils.la liblog.la libdiagnose_usb.la
 libbase_la_SOURCES = base/file.cpp base/stringprintf.cpp \
 		     base/strings.cpp base/logging.cpp \
-		     base/parsenetaddress.cpp
+		     base/parsenetaddress.cpp base/test_utils.cpp \
+				 base/threads.cpp
 
 libbase_la_CXXFLAGS = -I$(includedir) -I$(top_srcdir)/include \
 		      -I$(top_srcdir)/lib/base/include \
 		      -std=c++11
+
+libbuildversion_la_SOURCES = libbuildversion/libbuildversion.cpp
+libbuildversion_la_CXXFLAGS = -I$(includedir) -I$(top_srcdir)/include \
+					-I$(top_srcdir)/lib/libbuildversion/include \
+					-std=c++11
 
 libcrypto_utils_la_SOURCES = libcrypto_utils/android_pubkey.c
 libcrypto_utils_la_CFLAGS = -I$(includedir) -I$(top_srcdir)/include \
@@ -407,6 +432,11 @@ liblog_la_CFLAGS = -I$(includedir) -I$(top_srcdir)/include \
 		   -I$(top_srcdir)/lib/base/include -std=c99 \
 		   -DLIBLOG_LOG_TAG=1005 -DFAKE_LOG_DEVICE=1 \
 		   -D_POSIX_C_SOURCE=199309L
+
+libdiagnose_usb_la_SOURCES = diagnose_usb/diagnose_usb.cpp
+libdiagnose_usb_la_CXXFLAGS = -I$(includedir) -I$(top_srcdir)/include -std=c++11 \
+															-I$(top_srcdir)/lib/diagnose_usb/include \
+															-I$(top_srcdir)/lib/base/include
 
 all: all-am
 
@@ -492,9 +522,25 @@ base/libbase_la-logging.lo: base/$(am__dirstamp) \
 	base/$(DEPDIR)/$(am__dirstamp)
 base/libbase_la-parsenetaddress.lo: base/$(am__dirstamp) \
 	base/$(DEPDIR)/$(am__dirstamp)
+base/libbase_la-test_utils.lo: base/$(am__dirstamp) \
+	base/$(DEPDIR)/$(am__dirstamp)
+base/libbase_la-threads.lo: base/$(am__dirstamp) \
+	base/$(DEPDIR)/$(am__dirstamp)
 
 libbase.la: $(libbase_la_OBJECTS) $(libbase_la_DEPENDENCIES) $(EXTRA_libbase_la_DEPENDENCIES) 
 	$(AM_V_CXXLD)$(libbase_la_LINK) -rpath $(libdir) $(libbase_la_OBJECTS) $(libbase_la_LIBADD) $(LIBS)
+libbuildversion/$(am__dirstamp):
+	@$(MKDIR_P) libbuildversion
+	@: > libbuildversion/$(am__dirstamp)
+libbuildversion/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) libbuildversion/$(DEPDIR)
+	@: > libbuildversion/$(DEPDIR)/$(am__dirstamp)
+libbuildversion/libbuildversion_la-libbuildversion.lo:  \
+	libbuildversion/$(am__dirstamp) \
+	libbuildversion/$(DEPDIR)/$(am__dirstamp)
+
+libbuildversion.la: $(libbuildversion_la_OBJECTS) $(libbuildversion_la_DEPENDENCIES) $(EXTRA_libbuildversion_la_DEPENDENCIES) 
+	$(AM_V_CXXLD)$(libbuildversion_la_LINK) -rpath $(libdir) $(libbuildversion_la_OBJECTS) $(libbuildversion_la_LIBADD) $(LIBS)
 libcrypto_utils/$(am__dirstamp):
 	@$(MKDIR_P) libcrypto_utils
 	@: > libcrypto_utils/$(am__dirstamp)
@@ -530,6 +576,18 @@ libcutils/libcutils_la-sockets.lo: libcutils/$(am__dirstamp) \
 
 libcutils.la: $(libcutils_la_OBJECTS) $(libcutils_la_DEPENDENCIES) $(EXTRA_libcutils_la_DEPENDENCIES) 
 	$(AM_V_CXXLD)$(libcutils_la_LINK) -rpath $(libdir) $(libcutils_la_OBJECTS) $(libcutils_la_LIBADD) $(LIBS)
+diagnose_usb/$(am__dirstamp):
+	@$(MKDIR_P) diagnose_usb
+	@: > diagnose_usb/$(am__dirstamp)
+diagnose_usb/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) diagnose_usb/$(DEPDIR)
+	@: > diagnose_usb/$(DEPDIR)/$(am__dirstamp)
+diagnose_usb/libdiagnose_usb_la-diagnose_usb.lo:  \
+	diagnose_usb/$(am__dirstamp) \
+	diagnose_usb/$(DEPDIR)/$(am__dirstamp)
+
+libdiagnose_usb.la: $(libdiagnose_usb_la_OBJECTS) $(libdiagnose_usb_la_DEPENDENCIES) $(EXTRA_libdiagnose_usb_la_DEPENDENCIES) 
+	$(AM_V_CXXLD)$(libdiagnose_usb_la_LINK) -rpath $(libdir) $(libdiagnose_usb_la_OBJECTS) $(libdiagnose_usb_la_LIBADD) $(LIBS)
 liblog/$(am__dirstamp):
 	@$(MKDIR_P) liblog
 	@: > liblog/$(am__dirstamp)
@@ -550,6 +608,10 @@ mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
 	-rm -f base/*.$(OBJEXT)
 	-rm -f base/*.lo
+	-rm -f diagnose_usb/*.$(OBJEXT)
+	-rm -f diagnose_usb/*.lo
+	-rm -f libbuildversion/*.$(OBJEXT)
+	-rm -f libbuildversion/*.lo
 	-rm -f libcrypto_utils/*.$(OBJEXT)
 	-rm -f libcrypto_utils/*.lo
 	-rm -f libcutils/*.$(OBJEXT)
@@ -565,6 +627,10 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@base/$(DEPDIR)/libbase_la-parsenetaddress.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@base/$(DEPDIR)/libbase_la-stringprintf.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@base/$(DEPDIR)/libbase_la-strings.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@base/$(DEPDIR)/libbase_la-test_utils.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@base/$(DEPDIR)/libbase_la-threads.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@diagnose_usb/$(DEPDIR)/libdiagnose_usb_la-diagnose_usb.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@libbuildversion/$(DEPDIR)/libbuildversion_la-libbuildversion.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@libcrypto_utils/$(DEPDIR)/libcrypto_utils_la-android_pubkey.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-load_file.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@libcutils/$(DEPDIR)/libcutils_la-socket_inaddr_any_server_unix.Plo@am__quote@
@@ -730,6 +796,27 @@ base/libbase_la-parsenetaddress.lo: base/parsenetaddress.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -c -o base/libbase_la-parsenetaddress.lo `test -f 'base/parsenetaddress.cpp' || echo '$(srcdir)/'`base/parsenetaddress.cpp
 
+base/libbase_la-test_utils.lo: base/test_utils.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -MT base/libbase_la-test_utils.lo -MD -MP -MF base/$(DEPDIR)/libbase_la-test_utils.Tpo -c -o base/libbase_la-test_utils.lo `test -f 'base/test_utils.cpp' || echo '$(srcdir)/'`base/test_utils.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) base/$(DEPDIR)/libbase_la-test_utils.Tpo base/$(DEPDIR)/libbase_la-test_utils.Plo
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='base/test_utils.cpp' object='base/libbase_la-test_utils.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -c -o base/libbase_la-test_utils.lo `test -f 'base/test_utils.cpp' || echo '$(srcdir)/'`base/test_utils.cpp
+
+base/libbase_la-threads.lo: base/threads.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -MT base/libbase_la-threads.lo -MD -MP -MF base/$(DEPDIR)/libbase_la-threads.Tpo -c -o base/libbase_la-threads.lo `test -f 'base/threads.cpp' || echo '$(srcdir)/'`base/threads.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) base/$(DEPDIR)/libbase_la-threads.Tpo base/$(DEPDIR)/libbase_la-threads.Plo
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='base/threads.cpp' object='base/libbase_la-threads.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbase_la_CXXFLAGS) $(CXXFLAGS) -c -o base/libbase_la-threads.lo `test -f 'base/threads.cpp' || echo '$(srcdir)/'`base/threads.cpp
+
+libbuildversion/libbuildversion_la-libbuildversion.lo: libbuildversion/libbuildversion.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbuildversion_la_CXXFLAGS) $(CXXFLAGS) -MT libbuildversion/libbuildversion_la-libbuildversion.lo -MD -MP -MF libbuildversion/$(DEPDIR)/libbuildversion_la-libbuildversion.Tpo -c -o libbuildversion/libbuildversion_la-libbuildversion.lo `test -f 'libbuildversion/libbuildversion.cpp' || echo '$(srcdir)/'`libbuildversion/libbuildversion.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) libbuildversion/$(DEPDIR)/libbuildversion_la-libbuildversion.Tpo libbuildversion/$(DEPDIR)/libbuildversion_la-libbuildversion.Plo
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='libbuildversion/libbuildversion.cpp' object='libbuildversion/libbuildversion_la-libbuildversion.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbuildversion_la_CXXFLAGS) $(CXXFLAGS) -c -o libbuildversion/libbuildversion_la-libbuildversion.lo `test -f 'libbuildversion/libbuildversion.cpp' || echo '$(srcdir)/'`libbuildversion/libbuildversion.cpp
+
 libcutils/libcutils_la-sockets.lo: libcutils/sockets.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_CXX)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CXXFLAGS) $(CXXFLAGS) -MT libcutils/libcutils_la-sockets.lo -MD -MP -MF libcutils/$(DEPDIR)/libcutils_la-sockets.Tpo -c -o libcutils/libcutils_la-sockets.lo `test -f 'libcutils/sockets.cpp' || echo '$(srcdir)/'`libcutils/sockets.cpp
 @am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) libcutils/$(DEPDIR)/libcutils_la-sockets.Tpo libcutils/$(DEPDIR)/libcutils_la-sockets.Plo
@@ -737,12 +824,21 @@ libcutils/libcutils_la-sockets.lo: libcutils/sockets.cpp
 @AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libcutils_la_CXXFLAGS) $(CXXFLAGS) -c -o libcutils/libcutils_la-sockets.lo `test -f 'libcutils/sockets.cpp' || echo '$(srcdir)/'`libcutils/sockets.cpp
 
+diagnose_usb/libdiagnose_usb_la-diagnose_usb.lo: diagnose_usb/diagnose_usb.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_CXX)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libdiagnose_usb_la_CXXFLAGS) $(CXXFLAGS) -MT diagnose_usb/libdiagnose_usb_la-diagnose_usb.lo -MD -MP -MF diagnose_usb/$(DEPDIR)/libdiagnose_usb_la-diagnose_usb.Tpo -c -o diagnose_usb/libdiagnose_usb_la-diagnose_usb.lo `test -f 'diagnose_usb/diagnose_usb.cpp' || echo '$(srcdir)/'`diagnose_usb/diagnose_usb.cpp
+@am__fastdepCXX_TRUE@	$(AM_V_at)$(am__mv) diagnose_usb/$(DEPDIR)/libdiagnose_usb_la-diagnose_usb.Tpo diagnose_usb/$(DEPDIR)/libdiagnose_usb_la-diagnose_usb.Plo
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	$(AM_V_CXX)source='diagnose_usb/diagnose_usb.cpp' object='diagnose_usb/libdiagnose_usb_la-diagnose_usb.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCXX_FALSE@	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCXX_FALSE@	$(AM_V_CXX@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CXX $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libdiagnose_usb_la_CXXFLAGS) $(CXXFLAGS) -c -o diagnose_usb/libdiagnose_usb_la-diagnose_usb.lo `test -f 'diagnose_usb/diagnose_usb.cpp' || echo '$(srcdir)/'`diagnose_usb/diagnose_usb.cpp
+
 mostlyclean-libtool:
 	-rm -f *.lo
 
 clean-libtool:
 	-rm -rf .libs _libs
 	-rm -rf base/.libs base/_libs
+	-rm -rf diagnose_usb/.libs diagnose_usb/_libs
+	-rm -rf libbuildversion/.libs libbuildversion/_libs
 	-rm -rf libcrypto_utils/.libs libcrypto_utils/_libs
 	-rm -rf libcutils/.libs libcutils/_libs
 	-rm -rf liblog/.libs liblog/_libs
@@ -864,6 +960,10 @@ distclean-generic:
 	-test . = "$(srcdir)" || test -z "$(CONFIG_CLEAN_VPATH_FILES)" || rm -f $(CONFIG_CLEAN_VPATH_FILES)
 	-rm -f base/$(DEPDIR)/$(am__dirstamp)
 	-rm -f base/$(am__dirstamp)
+	-rm -f diagnose_usb/$(DEPDIR)/$(am__dirstamp)
+	-rm -f diagnose_usb/$(am__dirstamp)
+	-rm -f libbuildversion/$(DEPDIR)/$(am__dirstamp)
+	-rm -f libbuildversion/$(am__dirstamp)
 	-rm -f libcrypto_utils/$(DEPDIR)/$(am__dirstamp)
 	-rm -f libcrypto_utils/$(am__dirstamp)
 	-rm -f libcutils/$(DEPDIR)/$(am__dirstamp)
@@ -880,7 +980,7 @@ clean-am: clean-generic clean-libLTLIBRARIES clean-libtool \
 	mostlyclean-am
 
 distclean: distclean-am
-	-rm -rf base/$(DEPDIR) libcrypto_utils/$(DEPDIR) libcutils/$(DEPDIR) liblog/$(DEPDIR)
+	-rm -rf base/$(DEPDIR) diagnose_usb/$(DEPDIR) libbuildversion/$(DEPDIR) libcrypto_utils/$(DEPDIR) libcutils/$(DEPDIR) liblog/$(DEPDIR)
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-tags
@@ -926,7 +1026,7 @@ install-ps-am:
 installcheck-am:
 
 maintainer-clean: maintainer-clean-am
-	-rm -rf base/$(DEPDIR) libcrypto_utils/$(DEPDIR) libcutils/$(DEPDIR) liblog/$(DEPDIR)
+	-rm -rf base/$(DEPDIR) diagnose_usb/$(DEPDIR) libbuildversion/$(DEPDIR) libcrypto_utils/$(DEPDIR) libcutils/$(DEPDIR) liblog/$(DEPDIR)
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 
